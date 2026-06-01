@@ -1,6 +1,7 @@
 # vboard
 Enhanced with caps and shift respecting label, better ui, custom command and printscreen buttons customized in config. 
-<img width="1131" height="746" alt="image" src="https://github.com/user-attachments/assets/1b0b0ba1-79e9-4b25-97cb-6871b254ab07" />
+<img width="1103" height="669" alt="image" src="https://github.com/user-attachments/assets/fe815910-678d-4203-bffd-9b9bb987524c" />
+
 Recommened KDE Window Rules
 <img width="685" height="689" alt="image" src="https://github.com/user-attachments/assets/21593c16-09e3-419d-9c65-de20c9d5f444" />
 
