@@ -1,9 +1,13 @@
 # vboard
-Enhanced with caps and shift respecting label, better ui, custom command and printscreen buttons customized in config. 
+Enhanced with real full layout, respecting label, better ui, custom command and printscreen buttons customized in config. Both for WM and DE's.
 <img width="1103" height="669" alt="image" src="https://github.com/user-attachments/assets/fe815910-678d-4203-bffd-9b9bb987524c" />
+<img width="1173" height="779" alt="1784846943667203361" src="https://github.com/user-attachments/assets/34e3ecd6-c329-4840-8565-674a27c9459f" />
+<img width="1166" height="425" alt="image" src="https://github.com/user-attachments/assets/ebbdb2a1-c0a5-45d9-89dc-e2489bc6ae93" />
+
 
 Recommened KDE Window Rules
 <img width="685" height="689" alt="image" src="https://github.com/user-attachments/assets/21593c16-09e3-419d-9c65-de20c9d5f444" />
+Built-in minimize for WM's: <img width="165" height="59" alt="image" src="https://github.com/user-attachments/assets/5ff1afe2-649d-4b91-a462-9531dbad2bf5" />
 
 ### **1. Install Dependencies**  
 Install  `python-uinput steam-devices` packages using your package manager:  
