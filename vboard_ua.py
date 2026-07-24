@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vboard_tr — TR-Q virtual keyboard (classic / portable build)
+vboard_ua — Ukrainian ЙЦУКЕН virtual keyboard (classic / portable build)
 
 SUPPORTED ENVIRONMENTS
   • Linux with access to /dev/uinput (input group membership + udev rule) — required
@@ -18,7 +18,8 @@ CAVEATS
     implementing wlr-layer-shell (Hyprland, Sway, KWin, niri, COSMIC, ...) use
     the vboard.py build, which solves both problems.
   • uinput emits scancodes at the kernel level, so the resulting character is
-    decided by the session's xkb layout. Key labels assume the TR-Q physical layout.
+    decided by the session's xkb layout. Key labels assume the Ukrainian xkb
+    layout (`setxkbmap ua`, variant "unicode") on ANSI/ISO hardware.
 """
 import gi
 import uinput
@@ -36,33 +37,33 @@ key_mapping = {
     uinput.KEY_4: "4",  uinput.KEY_5: "5",  uinput.KEY_6: "6",
     uinput.KEY_7: "7",  uinput.KEY_8: "8",  uinput.KEY_9: "9",
     uinput.KEY_0: "0",
-    uinput.KEY_MINUS: "*",    # TR physical: * key
-    uinput.KEY_EQUAL: "-",    # TR physical: - key
+    uinput.KEY_MINUS: "-",
+    uinput.KEY_EQUAL: "=",
     uinput.KEY_BACKSPACE: "Backspace",
     uinput.KEY_TAB: "Tab",
-    uinput.KEY_Q: "Q",  uinput.KEY_W: "W",  uinput.KEY_E: "E",
-    uinput.KEY_R: "R",  uinput.KEY_T: "T",  uinput.KEY_Y: "Y",
-    uinput.KEY_U: "U",  uinput.KEY_I: "I",  uinput.KEY_O: "O",
-    uinput.KEY_P: "P",
-    uinput.KEY_LEFTBRACE: "Ğ",
-    uinput.KEY_RIGHTBRACE: "Ü",
+    uinput.KEY_Q: "Й",  uinput.KEY_W: "Ц",  uinput.KEY_E: "У",
+    uinput.KEY_R: "К",  uinput.KEY_T: "Е",  uinput.KEY_Y: "Н",
+    uinput.KEY_U: "Г",  uinput.KEY_I: "Ш",  uinput.KEY_O: "Щ",
+    uinput.KEY_P: "З",
+    uinput.KEY_LEFTBRACE: "Х",
+    uinput.KEY_RIGHTBRACE: "Ї",
     uinput.KEY_ENTER: "Enter",
     uinput.KEY_LEFTCTRL: "Ctrl_L",
-    uinput.KEY_A: "A",  uinput.KEY_S: "S",  uinput.KEY_D: "D",
-    uinput.KEY_F: "F",  uinput.KEY_G: "G",  uinput.KEY_H: "H",
-    uinput.KEY_J: "J",  uinput.KEY_K: "K",  uinput.KEY_L: "L",
-    uinput.KEY_SEMICOLON: "Ş",
-    uinput.KEY_APOSTROPHE: "İ",
-    uinput.KEY_GRAVE: '"',    # TR physical: " key (top left)
+    uinput.KEY_A: "Ф",  uinput.KEY_S: "І",  uinput.KEY_D: "В",
+    uinput.KEY_F: "А",  uinput.KEY_G: "П",  uinput.KEY_H: "Р",
+    uinput.KEY_J: "О",  uinput.KEY_K: "Л",  uinput.KEY_L: "Д",
+    uinput.KEY_SEMICOLON: "Ж",
+    uinput.KEY_APOSTROPHE: "Є",
+    uinput.KEY_GRAVE: "'",      # UA: apostrophe key
     uinput.KEY_LEFTSHIFT: "Shift_L",
-    uinput.KEY_102ND: "><|",    # TR physical: <>/| key
-    uinput.KEY_BACKSLASH: ",",  # TR physical: , key
-    uinput.KEY_Z: "Z",  uinput.KEY_X: "X",  uinput.KEY_C: "C",
-    uinput.KEY_V: "V",  uinput.KEY_B: "B",  uinput.KEY_N: "N",
-    uinput.KEY_M: "M",
-    uinput.KEY_COMMA: "Ö",
-    uinput.KEY_DOT: "Ç",
-    uinput.KEY_SLASH: ".",    # TR physical: . key
+    uinput.KEY_102ND: "/|",     # UA: / and | on the ISO 102nd key
+    uinput.KEY_BACKSLASH: "Ґ",
+    uinput.KEY_Z: "Я",  uinput.KEY_X: "Ч",  uinput.KEY_C: "С",
+    uinput.KEY_V: "М",  uinput.KEY_B: "И",  uinput.KEY_N: "Т",
+    uinput.KEY_M: "Ь",
+    uinput.KEY_COMMA: "Б",
+    uinput.KEY_DOT: "Ю",
+    uinput.KEY_SLASH: ".",      # UA: . key (shift -> ,)
     uinput.KEY_RIGHTSHIFT: "Shift_R",
     uinput.KEY_KPENTER: "Enter",
     uinput.KEY_LEFTALT: "Alt_L",  uinput.KEY_RIGHTALT: "Alt_R",
@@ -84,12 +85,16 @@ key_mapping = {
     uinput.KEY_LEFTMETA: "Super_L", uinput.KEY_RIGHTMETA: "Super_R",
 }
 
-# Turkish character pairs — module-level constants, not rebuilt on every update_label call
-_TR_PAIRS = [("ğ", "Ğ"), ("ü", "Ü"), ("ş", "Ş"), ("ı", "İ"), ("ö", "Ö"), ("ç", "Ç")]
-_TR_LOWER = {lo for lo, _ in _TR_PAIRS}
-_TR_UPPER = {up for _, up in _TR_PAIRS}
-_TR_TO_UPPER = {lo: up for lo, up in _TR_PAIRS}
-_TR_TO_LOWER = {up: lo for lo, up in _TR_PAIRS}
+
+# Ukrainian ЙЦУКЕН alphabet as it appears on the key caps. Python's str.upper()
+# and str.lower() handle Cyrillic correctly, so no explicit case pairs are needed
+# (unlike Turkish, where dotted/dotless i needs special casing).
+_UA_ALPHABET = "ЙЦУКЕНГШЩЗХЇФІВАПРОЛДЖЄҐЯЧСМИТЬБЮ"
+
+# The physical "/" key (xkb <AB10>) carries "." unshifted and "," shifted.
+_UA_PUNCT_NORMAL = "."
+_UA_PUNCT_SHIFTED = ","
+_UA_PUNCT_TOGGLE = (_UA_PUNCT_NORMAL, _UA_PUNCT_SHIFTED)
 
 
 # ---------------------------------------------------------------- languages
@@ -98,7 +103,7 @@ _TR_TO_LOWER = {up: lo for lo, up in _TR_PAIRS}
 # (vboard_ua.py, vboard_ua_wm.py, vboard_no_fn_ua.py), so the switcher rewrites
 # just that token and a build always jumps to the same variant in another
 # language. Codes missing from the directory are skipped in the cycle.
-LANG = "tr"
+LANG = "ua"
 LANG_CYCLE = ["en", "ua", "tr"]
 LANG_NAMES = {"en": "US ANSI", "ua": "Українська (ЙЦУКЕН)", "tr": "Türkçe (Q)"}
 
@@ -207,16 +212,16 @@ class VirtualKeyboard(Gtk.Window):
         self.apply_css()
         self.device = uinput.Device(list(key_mapping.keys()))
 
-        # TR-Q layout — grid width plan (SC=32):
+        # Ukrainian ЙЦУКЕН layout — grid width plan (SC=32):
         # 1 unit = half a standard key width.
         # row_offsets: spacer units prepended to each row for stagger.
         # All zero for now; adjust here if stagger is needed.
         rows = [
             ["Esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"],
-            ['"', "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*", "-", "Backspace"],
-            ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "Ğ", "Ü"],
-            ["CapsLock", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Ş", "İ", ",", "Home"],
-            ["Shift_L", "><|", "Z", "X", "C", "V", "B", "N", "M", "Ö", "Ç", ".", "Shift_R"],
+            ["'", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
+            ["Tab", "Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х", "Ї"],
+            ["CapsLock", "Ф", "І", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Є", "Ґ", "Home"],
+            ["Shift_L", "/|", "Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю", ".", "Shift_R"],
             ["Ctrl_L", "Super_L", "Alt_L", "Space", "Alt_R", "Super_R", "Ctrl_R"],
         ]
         self.row_offsets = [0, 0, 0, 0, 0, 0]
@@ -234,7 +239,7 @@ class VirtualKeyboard(Gtk.Window):
         self._add_header_button("☰", self.change_visibility)
         self._add_header_button("+", self.change_opacity, True)
         self._add_header_button("-", self.change_opacity, False)
-        self._add_header_button(self.opacity)          # opacity label button (no callback)
+        self._add_header_button(self.opacity)
         self.color_combobox.append_text("Change Background")
         self.color_combobox.set_active(0)
         self.color_combobox.connect("changed", self.change_color)
@@ -310,7 +315,6 @@ class VirtualKeyboard(Gtk.Window):
             return self.bg_color
 
     def _accent_color(self):
-        """Derives accent color from bg_color (fully saturated hue, S=1 V=1)."""
         try:
             r, g, b = self._parse_bg()
         except Exception:
@@ -336,7 +340,6 @@ class VirtualKeyboard(Gtk.Window):
         return f"#{int(ar*255):02X}{int(ag*255):02X}{int(ab*255):02X}"
 
     def _pressed_bg_color(self):
-        """Decreases HSV saturation and increases value of the lighter color (pressed key feedback)."""
         try:
             r, g, b = self._parse_bg()
             r, g, b = min(255, r+30), min(255, g+30), min(255, b+30)
@@ -349,7 +352,6 @@ class VirtualKeyboard(Gtk.Window):
             if s == 0:
                 c = int(v * 255)
                 return f"{c}, {c}, {c}"
-            # hue from original lighter rgb
             rng_i = max(r, g, b) - min(r, g, b)
             if r >= g and r >= b:   h = ((g - b) / rng_i) % 6
             elif g >= r and g >= b: h = (b - r) / rng_i + 2
@@ -511,12 +513,12 @@ class VirtualKeyboard(Gtk.Window):
 
     # Key widths in grid units (1 unit = 0.5 standard key width); default 2 (square key)
     _KEY_WIDTHS = {
-        '"': 2, "*": 2, "-": 2,
+        "'": 2, "-": 2, "=": 2,
         "Backspace": 4,
         "Tab": 4,
-        "Ğ": 2, "Ü": 2,
+        "Х": 2, "Ї": 2,
         "CapsLock": 5,
-        ",": 3,
+        "Ґ": 3,
         "Enter": 3, "Home": 3,
         "Shift_L": 4, "Shift_R": 4,
         "Space": 14,
@@ -561,33 +563,33 @@ class VirtualKeyboard(Gtk.Window):
             col += width
 
     def update_label(self, show_symbols):
-        # Number row: " 1 2 3 4 5 6 7 8 9 0 * -  (row_buttons indices 0-12)
+        # Number row: ' 1 2 3 4 5 6 7 8 9 0 - =  (row_buttons indices 0-12)
         symbol_map = [
-            (0,  '"', 'é'),
+            (0,  "'", 'ʼ'),    # U+02BC modifier apostrophe on shift
             (1,  '1', '!'),
-            (2,  '2', "'"),
-            (3,  '3', '^'),
-            (4,  '4', '+'),
+            (2,  '2', '"'),
+            (3,  '3', '№'),
+            (4,  '4', ';'),
             (5,  '5', '%'),
-            (6,  '6', '&'),
-            (7,  '7', '/'),
-            (8,  '8', '('),
-            (9,  '9', ')'),
-            (10, '0', '='),
-            (11, '*', '?'),
-            (12, '-', '_'),
+            (6,  '6', ':'),
+            (7,  '7', '?'),
+            (8,  '8', '*'),
+            (9,  '9', '('),
+            (10, '0', ')'),
+            (11, '-', '_'),
+            (12, '=', '+'),
         ]
         for pos, normal, shifted in symbol_map:
             self.row_buttons[pos].set_label(shifted if show_symbols else normal)
 
         use_upper = show_symbols ^ self.caps_lock_on
-        letter_keys = set("QWERTYUIOPASDFGHJKLZXCVBNM")
+        letter_keys = set(_UA_ALPHABET)
         for btn in self.row_buttons:
             lbl = btn.get_label()
             if lbl.upper() in letter_keys:
                 btn.set_label(lbl.upper() if use_upper else lbl.lower())
-            elif lbl in _TR_LOWER or lbl in _TR_UPPER:
-                btn.set_label(_TR_TO_UPPER[lbl] if use_upper else _TR_TO_LOWER.get(lbl, lbl))
+            elif lbl in _UA_PUNCT_TOGGLE:
+                btn.set_label(_UA_PUNCT_SHIFTED if show_symbols else _UA_PUNCT_NORMAL)
 
     def create_frow_cmd_buttons(self, grid, f_row_index, start_col, count, width):
         """Fills the free space to the right of the F-row with CMD buttons,
@@ -606,8 +608,8 @@ class VirtualKeyboard(Gtk.Window):
         Del:   row=1, col=30, w=6
         Enter: row=2, col=28, w=8
         End:   row=3, col=33, w=3
-        CMD:   row=4, col=30, w=2  ↑: row=4, col=32, w=2
-        ←:     row=5, col=30, w=2  ↓: row=5, col=32, w=2  →: row=5, col=34, w=2
+        CMD:   row=4, col=30, w=2   ↑: row=4, col=32, w=2
+        ←:     row=5, col=30, w=2   ↓: row=5, col=32, w=2   →: row=5, col=34, w=2
         PrtSc: row=4, col=34, w=2
         """
         # (row, col, label, key_event, width)
@@ -659,9 +661,9 @@ class VirtualKeyboard(Gtk.Window):
             text=title,
         )
         dialog.format_secondary_text(
-            f"Lütfen aşağıdaki dosyayı açıp\n"
-            f"  {key_name} = <komutunuz>\n"
-            f"satırını ekleyin:\n\n{self.CONFIG_FILE}"
+            f"Відкрийте файл нижче й додайте рядок:\n"
+            f"  {key_name} = <ваша команда>\n\n"
+            f"{self.CONFIG_FILE}"
         )
         dialog.run()
         dialog.destroy()
@@ -672,13 +674,13 @@ class VirtualKeyboard(Gtk.Window):
         if cmd.strip():
             GLib.spawn_command_line_async(cmd.strip())
         else:
-            self._show_config_dialog(f"{key} tanımlı değil", key)
+            self._show_config_dialog(f"{key} не налаштовано", key)
 
     def on_prtsc_press(self, widget):
         if self.prtsc_command.strip():
             GLib.spawn_command_line_async(self.prtsc_command.strip())
         else:
-            self._show_config_dialog("Print Screen komutu tanımlı değil", "prtsc_command")
+            self._show_config_dialog("Команду Print Screen не налаштовано", "prtsc_command")
 
     def update_modifier(self, key_event, value):
         self.modifiers[key_event] = value
@@ -723,7 +725,7 @@ class VirtualKeyboard(Gtk.Window):
         if hasattr(self, "repeat_source"):
             GLib.source_remove(self.repeat_source)
             del self.repeat_source
-        # Keep the pressed look on modifier and CapsLock buttons
+        # Keep pressed appearance for active modifier and CapsLock buttons
         is_modifier = widget in self.modifier_buttons.values()
         is_capslock = hasattr(self, "caps_lock_btn") and widget is self.caps_lock_btn
         if not is_modifier and not is_capslock:
@@ -760,13 +762,13 @@ class VirtualKeyboard(Gtk.Window):
         try:
             if os.path.exists(self.CONFIG_FILE):
                 self.config.read(self.CONFIG_FILE)
-                self.bg_color      = self.config.get("DEFAULT", "bg_color")
-                self.opacity       = self.config.get("DEFAULT", "opacity")
-                self.text_color    = self.config.get("DEFAULT", "text_color",    fallback="white")
-                self.theme         = self.config.get("DEFAULT", "theme",         fallback="")
-                self.width         = self.config.getint("DEFAULT", "width",      fallback=0)
-                self.height        = self.config.getint("DEFAULT", "height",     fallback=0)
-                self.prtsc_command = self.config.get("DEFAULT", "prtsc_command", fallback="")
+                self.bg_color       = self.config.get("DEFAULT", "bg_color")
+                self.opacity        = self.config.get("DEFAULT", "opacity")
+                self.text_color     = self.config.get("DEFAULT", "text_color",     fallback="white")
+                self.theme          = self.config.get("DEFAULT", "theme",          fallback="")
+                self.width          = self.config.getint("DEFAULT", "width",       fallback=0)
+                self.height         = self.config.getint("DEFAULT", "height",      fallback=0)
+                self.prtsc_command  = self.config.get("DEFAULT", "prtsc_command",  fallback="")
                 self.custom_commands = {
                     n: self.config.get("DEFAULT", f"custom_command_{n}", fallback="")
                     for n in range(1, 6)
@@ -777,13 +779,13 @@ class VirtualKeyboard(Gtk.Window):
 
     def save_settings(self):
         self.config["DEFAULT"] = {
-            "bg_color":      self.bg_color,
-            "opacity":       self.opacity,
-            "text_color":    self.text_color,
-            "theme":         self.theme,
-            "width":         self.width,
-            "height":        self.height,
-            "prtsc_command": self.prtsc_command,
+            "bg_color":       self.bg_color,
+            "opacity":        self.opacity,
+            "text_color":     self.text_color,
+            "theme":          self.theme,
+            "width":          self.width,
+            "height":         self.height,
+            "prtsc_command":  self.prtsc_command,
             **{f"custom_command_{n}": v for n, v in self.custom_commands.items()},
         }
         try:

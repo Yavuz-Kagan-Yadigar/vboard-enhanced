@@ -23,6 +23,7 @@ CAVEATS
 import gi
 import uinput
 import os
+import sys
 import configparser
 
 gi.require_version('Gtk', '3.0')
@@ -84,6 +85,32 @@ key_mapping = {
 }
 
 
+# ---------------------------------------------------------------- languages
+# Language builds are sibling scripts in the very same directory. The language
+# code is always one underscore-separated token of the file name
+# (vboard_ua.py, vboard_ua_wm.py, vboard_no_fn_ua.py), so the switcher rewrites
+# just that token and a build always jumps to the same variant in another
+# language. Codes missing from the directory are skipped in the cycle.
+LANG = "en"
+LANG_CYCLE = ["en", "ua", "tr"]
+LANG_NAMES = {"en": "US ANSI", "ua": "Українська (ЙЦУКЕН)", "tr": "Türkçe (Q)"}
+
+# ---------------------------------------------------------------- themes
+# A theme pins every surface colour explicitly instead of deriving shades from a
+# single bg_color, which is what the plain colour entries do. Picking a theme
+# from the same dropdown sets self.theme; picking a plain colour clears it.
+THEMES = {
+    "Evangelion": {
+        "bg":      "26,6,38",        # Colors:Window     / BackgroundNormal
+        "top_bg":  "14,3,22",        # Colors:Tooltip    / BackgroundNormal
+        "key_bg":  "58,20,82",       # Colors:Button     / BackgroundNormal
+        "pressed": "53,93,101",      # Colors:Selection  / BackgroundNormal
+        "text":    "rgb(167,254,1)",  # ForegroundNormal
+        "accent":  "#A7FE01",        # DecorationFocus / DecorationHover
+    },
+}
+
+
 class VirtualKeyboard(Gtk.Window):
     def __init__(self):
         super().__init__(title="Virtual Keyboard", name="toplevel")
@@ -103,6 +130,7 @@ class VirtualKeyboard(Gtk.Window):
         self.bg_color = "0, 0, 0"
         self.opacity = "0.90"
         self.text_color = "white"
+        self.theme = ""
         self.width = 0
         self.height = 0
         self.prtsc_command = ""
@@ -121,6 +149,7 @@ class VirtualKeyboard(Gtk.Window):
         }
         self.caps_lock_on = False
         self.colors = [
+            ("Evangelion", "26,6,38"),
             ("Black",     "0,0,0"),
             ("Red",       "255,0,0"),
             ("Pink",      "255,105,183"),
@@ -194,6 +223,7 @@ class VirtualKeyboard(Gtk.Window):
     # ------------------------------------------------------------------ settings bar
 
     def create_settings(self):
+        self._add_lang_button()
         self._add_header_button("☰", self.change_visibility)
         self._add_header_button("+", self.change_opacity, True)
         self._add_header_button("-", self.change_opacity, False)
@@ -225,12 +255,19 @@ class VirtualKeyboard(Gtk.Window):
 
     def change_visibility(self, widget=None):
         for button in self.buttons:
-            if button.get_label() != "☰":
+            if button.get_label() != "☰" and button is not self.lang_btn:
                 button.set_visible(not button.get_visible())
         self.color_combobox.set_visible(not self.color_combobox.get_visible())
 
     def change_color(self, widget):
         label = self.color_combobox.get_active_text()
+        if label in THEMES:
+            self.theme = label
+            self.bg_color = THEMES[label]["bg"]
+            self.text_color = THEMES[label]["text"]
+            self.apply_css()
+            return
+        self.theme = ""
         for label_, color_ in self.colors:
             if label_ == label:
                 self.bg_color = color_
@@ -322,6 +359,80 @@ class VirtualKeyboard(Gtk.Window):
 
     # ------------------------------------------------------------------ CSS
 
+    # ------------------------------------------------------------------ language switch
+
+    def _script_for(self, lang):
+        """Path of the sibling build for `lang`, same variant, same directory."""
+        path = os.path.abspath(__file__)
+        parts = os.path.splitext(os.path.basename(path))[0].split("_")
+        parts = [lang if p == LANG else p for p in parts]
+        return os.path.join(os.path.dirname(path), "_".join(parts) + ".py")
+
+    def _available_langs(self):
+        """Cycle order, filtered down to the builds actually present on disk."""
+        return [l for l in LANG_CYCLE
+                if l == LANG or os.path.isfile(self._script_for(l))]
+
+    def _next_lang(self):
+        langs = self._available_langs()
+        return langs[(langs.index(LANG) + 1) % len(langs)]
+
+    def _add_lang_button(self):
+        """Layout switcher, sitting left of the menu button. Relaunches the
+        sibling build for the next language and exits, so all vboard_*.py files
+        have to live in one directory. Stays visible when the menu collapses."""
+        self.lang_btn = Gtk.Button(label=LANG.upper())
+        self.lang_btn.set_name("headbar-button")
+        self.lang_btn.set_can_focus(False)
+        if len(self._available_langs()) < 2:
+            self.lang_btn.set_sensitive(False)
+            self.lang_btn.set_tooltip_text(
+                f"{LANG_NAMES[LANG]} — no other language build found in "
+                f"{os.path.dirname(os.path.abspath(__file__))}"
+            )
+        else:
+            self.lang_btn.set_tooltip_text(
+                f"{LANG_NAMES[LANG]} → {LANG_NAMES[self._next_lang()]}"
+            )
+            self.lang_btn.connect("clicked", self.on_lang_press)
+        self.header.add(self.lang_btn)
+        self.buttons.append(self.lang_btn)
+
+    def on_lang_press(self, widget):
+        """Hands over to the next language build. Settings are written first so
+        the successor inherits colour, opacity and window size."""
+        script = self._script_for(self._next_lang())
+        self.save_settings()
+        try:
+            GLib.spawn_async([sys.executable, script],
+                             flags=GLib.SpawnFlags.SEARCH_PATH)
+        except GLib.GError as e:
+            print(f"Warning: could not start {script} ({e}).")
+            return
+        Gtk.main_quit()
+
+    # ------------------------------------------------------------------ theme helpers
+
+    def _theme(self):
+        """Active theme dict, or None when a plain background colour is in use."""
+        return THEMES.get(self.theme)
+
+    def _css_top_bg(self):
+        t = self._theme()
+        return t["top_bg"] if t else self._darker_color()
+
+    def _css_key_bg(self):
+        t = self._theme()
+        return t["key_bg"] if t else self._lighter_color()
+
+    def _css_pressed(self):
+        t = self._theme()
+        return t["pressed"] if t else self._pressed_bg_color()
+
+    def _css_accent(self):
+        t = self._theme()
+        return t["accent"] if t else self._accent_color()
+
     def apply_css(self):
         provider = Gtk.CssProvider()
         css = f"""
@@ -347,7 +458,7 @@ class VirtualKeyboard(Gtk.Window):
             background-image: none;
         }}
         #toplevel {{
-            background-color: rgba({self._darker_color()}, {self.opacity});
+            background-color: rgba({self._css_top_bg()}, {self.opacity});
         }}
         #grid button label {{
             color: {self.text_color};
@@ -355,7 +466,7 @@ class VirtualKeyboard(Gtk.Window):
         #grid button {{
             border: none;
             background-image: none;
-            background-color: rgba({self._lighter_color()}, {self.opacity});
+            background-color: rgba({self._css_key_bg()}, {self.opacity});
             padding: 0px;
             margin: 2px;
         }}
@@ -364,12 +475,12 @@ class VirtualKeyboard(Gtk.Window):
             color: {self.text_color};
         }}
         #grid button:hover {{
-            border: 1px solid {self._accent_color()};
+            border: 1px solid {self._css_accent()};
         }}
         #grid button.pressed,
         #grid button.pressed:hover {{
             border: 1px solid {self.text_color};
-            background-color: rgba({self._pressed_bg_color()}, {self.opacity});
+            background-color: rgba({self._css_pressed()}, {self.opacity});
         }}
         tooltip {{
             color: white;
@@ -642,6 +753,7 @@ class VirtualKeyboard(Gtk.Window):
                 self.bg_color       = self.config.get("DEFAULT", "bg_color")
                 self.opacity        = self.config.get("DEFAULT", "opacity")
                 self.text_color     = self.config.get("DEFAULT", "text_color",     fallback="white")
+                self.theme          = self.config.get("DEFAULT", "theme",          fallback="")
                 self.width          = self.config.getint("DEFAULT", "width",       fallback=0)
                 self.height         = self.config.getint("DEFAULT", "height",      fallback=0)
                 self.prtsc_command  = self.config.get("DEFAULT", "prtsc_command",  fallback="")
@@ -658,6 +770,7 @@ class VirtualKeyboard(Gtk.Window):
             "bg_color":       self.bg_color,
             "opacity":        self.opacity,
             "text_color":     self.text_color,
+            "theme":          self.theme,
             "width":          self.width,
             "height":         self.height,
             "prtsc_command":  self.prtsc_command,
