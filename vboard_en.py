@@ -213,6 +213,7 @@ class VirtualKeyboard(Gtk.Window):
         self.height = 0
         self.prtsc_command = ""
         self.custom_commands = {n: "" for n in range(1, 6)}
+        self.custom_labels = {n: "" for n in range(1, 6)}
         self.read_settings()
 
         self.modifiers = {
@@ -743,8 +744,9 @@ class VirtualKeyboard(Gtk.Window):
         each bound to its own custom_command_N."""
         for i in range(count):
             n = i + 1
-            button = Gtk.Button(label=f"CMD{n}")
-            button.set_tooltip_text(f"custom_command_{n} (config)")
+            button = Gtk.Button(label=self._cmd_label(n))
+            button.set_tooltip_text(
+                f"{self._cmd_label(n)}  ·  custom_command_{n} (config)")
             button.connect("pressed", self.on_cmd_press, n)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
@@ -785,6 +787,7 @@ class VirtualKeyboard(Gtk.Window):
                 button.connect("pressed", self.on_prtsc_press)
             elif label == "CMD":
                 button.connect("pressed", self.on_cmd_press, 1)
+                button.set_label(self._cmd_label(1))
             else:
                 button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
@@ -816,6 +819,10 @@ class VirtualKeyboard(Gtk.Window):
         )
         dialog.run()
         dialog.destroy()
+
+    def _cmd_label(self, n):
+        """Config label for custom_command_n, or the default "CMDn"."""
+        return self.custom_labels.get(n, "").strip() or f"CMD{n}"
 
     def on_cmd_press(self, widget, n):
         cmd = self.custom_commands.get(n, "")
@@ -978,6 +985,10 @@ class VirtualKeyboard(Gtk.Window):
                     n: self.config.get("DEFAULT", f"custom_command_{n}", fallback="")
                     for n in range(1, 6)
                 }
+                self.custom_labels = {
+                    n: self.config.get("DEFAULT", f"custom_label_{n}", fallback="")
+                    for n in range(1, 6)
+                }
                 print(f"rgba: {self.bg_color}, {self.opacity}")
         except configparser.Error as e:
             print(f"Warning: Could not read config file ({e}). Using defaults.")
@@ -992,6 +1003,7 @@ class VirtualKeyboard(Gtk.Window):
             "height":         self.height,
             "prtsc_command":  self.prtsc_command,
             **{f"custom_command_{n}": v for n, v in self.custom_commands.items()},
+            **{f"custom_label_{n}": v for n, v in self.custom_labels.items()},
         }
         try:
             with open(self.CONFIG_FILE, "w") as f:
