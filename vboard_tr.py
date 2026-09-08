@@ -101,6 +101,101 @@ LANG = "tr"
 LANG_NAMES = {"en": "US ANSI", "ua": "Українська (ЙЦУКЕН)", "tr": "Türkçe (Q)"}
 
 
+SYSTEM_QT_LABEL = "Follow System Qt Theme"
+
+
+def _rgb_triplet(raw):
+    parts = [p.strip() for p in str(raw).split(",")[:3]]
+    if len(parts) == 3 and all(p.isdigit() for p in parts):
+        return tuple(max(0, min(255, int(p))) for p in parts)
+    return None
+
+
+def _mix(base, target, t):
+    """base moved a fraction t toward target (t may be negative)."""
+    return tuple(max(0, min(255, round(c + t * (d - c)))) for c, d in zip(base, target))
+
+
+def _saturate(rgb, f):
+    """Push a colour's channels away from its brightest one -> more chroma."""
+    mx = max(rgb)
+    return tuple(max(0, min(255, round(mx - (mx - c) * f))) for c in rgb)
+
+
+def _kde_scheme_colors(path):
+    """Every vboard surface as an "r,g,b" string, from one KDE scheme ini, or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+
+    def get(group, key):
+        try:
+            return _rgb_triplet(parser.get(group, key))
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            return None
+
+    bg = get("Colors:Window", "BackgroundNormal")
+    if not bg:
+        return None
+    fg = get("Colors:Window", "ForegroundNormal") or (255, 255, 255)
+    accent = (get("Colors:Window", "DecorationFocus")
+              or get("Colors:Button", "DecorationHover") or fg)
+    pressed = get("Colors:Selection", "BackgroundNormal") or accent
+
+    # Material-You style schemes keep every surface a near-neutral near-black, so
+    # pull the scheme's own accent hue back into the surfaces -- otherwise the
+    # keyboard reads as flat grey. Tunables:
+    SURFACE_SAT = 1.8   # chroma boost on the window colour
+    KEY_TINT    = 0.28  # how far the key face is mixed toward the accent
+    GAP_DARKEN  = 0.40  # how much deeper the inter-key gaps sit
+    bg = _saturate(bg, SURFACE_SAT)
+    key_bg = _mix(bg, accent, KEY_TINT)
+    top_bg = _mix(bg, (0, 0, 0), GAP_DARKEN)
+
+    def s(t):
+        return "%d,%d,%d" % t
+
+    return {
+        "bg":      s(bg),
+        "top_bg":  s(top_bg),
+        "key_bg":  s(key_bg),
+        "pressed": s(pressed),
+        "accent":  "rgb(%s)" % s(accent),
+        "text":    "rgb(%s)" % s(fg),
+    }
+
+
+def _qtct_scheme_path(conf):
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(conf, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+    return parser.get("Appearance", "color_scheme_path", fallback="") or None
+
+
+def read_system_qt_theme():
+    """Full colour set of the active Qt/KDE scheme (THEMES-style dict), or None."""
+    cfg = os.path.expanduser("~/.config")
+    paths = []
+    for name in ("qt6ct", "qt5ct"):
+        conf = os.path.join(cfg, name, name + ".conf")
+        if os.path.isfile(conf):
+            paths.append(_qtct_scheme_path(conf))
+    paths.append(os.path.join(cfg, "kdeglobals"))
+    for path in paths:
+        got = _kde_scheme_colors(path)
+        if got:
+            return got
+    return None
+
+
 class VirtualKeyboard(Gtk.Window):
     def __init__(self):
         super().__init__(title="Virtual Keyboard", name="toplevel")
@@ -118,6 +213,7 @@ class VirtualKeyboard(Gtk.Window):
         self.config = configparser.ConfigParser()
 
         self.bg_color = "0, 0, 0"
+        self.follow_qt = False
         self.opacity = "0.90"
         self.text_color = "white"
         self.width = 0
@@ -198,6 +294,11 @@ class VirtualKeyboard(Gtk.Window):
         self.bg_color_btn = self._add_color_button(self._bg_rgba(), "Background color", self.on_bg_color_set)
         self._add_header_label("Text:")
         self.text_color_btn = self._add_color_button(self._text_rgba(), "Text color", self.on_text_color_set)
+        self.word_label = Gtk.Label(label="")
+        self.word_label.set_name("word-preview")
+        self.header.set_custom_title(self.word_label)
+        self.current_word = ""
+        self._add_qt_toggle()
 
     def _add_header_button(self, label, callback=None, cb_arg=None):
         button = Gtk.Button(label=label)
@@ -449,11 +550,36 @@ class VirtualKeyboard(Gtk.Window):
             return
         Gtk.main_quit()
 
+    def _add_qt_toggle(self):
+        """QT checkbox — when ticked, every surface colour is pulled live from
+        the running Qt/KDE scheme instead of from bg_color. Hidden by the menu
+        button like the other controls."""
+        self.qt_toggle = Gtk.CheckButton(label="QT")
+        self.qt_toggle.set_name("headbar-button")
+        self.qt_toggle.set_can_focus(False)
+        self.qt_toggle.set_active(self.follow_qt)
+        self.qt_toggle.set_tooltip_text("Follow the system Qt / KDE colour scheme")
+        self.qt_toggle.connect("toggled", self.on_qt_toggled)
+        self.header.add(self.qt_toggle)
+        self.buttons.append(self.qt_toggle)
+
+    def on_qt_toggled(self, widget):
+        self.follow_qt = widget.get_active()
+        self.apply_css()
+        self.save_settings()
+
     def apply_css(self):
         provider = Gtk.CssProvider()
+        qt = read_system_qt_theme() if self.follow_qt else None
+        c_bg      = qt["bg"]      if qt else self.bg_color
+        c_text    = qt["text"]    if qt else self.text_color
+        c_top     = qt["top_bg"]  if qt else self._darker_color()
+        c_key     = qt["key_bg"]  if qt else self._lighter_color()
+        c_accent  = qt["accent"]  if qt else self._accent_color()
+        c_pressed = qt["pressed"] if qt else self._pressed_bg_color()
         css = f"""
         headerbar {{
-            background-color: rgba({self.bg_color}, {self.opacity});
+            background-color: rgba({c_bg}, {self.opacity});
             border: 0px;
             box-shadow: none;
         }}
@@ -468,46 +594,50 @@ class VirtualKeyboard(Gtk.Window):
             min-height: 20px;
         }}
         headerbar button label {{
-            color: {self.text_color};
+            color: {c_text};
         }}
         #headbar-button, #langcombo button.combo {{
             background-image: none;
         }}
         #toplevel {{
-            background-color: rgba({self._darker_color()}, {self.opacity});
+            background-color: rgba({c_top}, {self.opacity});
         }}
         #grid button label {{
-            color: {self.text_color};
+            color: {c_text};
         }}
         #grid button {{
             border: none;
             background-image: none;
-            background-color: rgba({self._lighter_color()}, {self.opacity});
+            background-color: rgba({c_key}, {self.opacity});
             padding: 0px;
             margin: 2px;
         }}
         button {{
             background-color: transparent;
-            color: {self.text_color};
+            color: {c_text};
         }}
         #grid button:hover {{
-            border: 1px solid {self._accent_color()};
+            border: 1px solid {c_accent};
         }}
         #grid button.pressed,
         #grid button.pressed:hover {{
-            border: 1px solid {self.text_color};
-            background-color: rgba({self._pressed_bg_color()}, {self.opacity});
+            border: 1px solid {c_text};
+            background-color: rgba({c_pressed}, {self.opacity});
         }}
         tooltip {{
             color: white;
             padding: 5px;
         }}
         #langcombo button.combo {{
-            color: {self.text_color};
+            color: {c_text};
             padding: 2px;
         }}
+        #word-preview {{
+            color: {c_text};
+            font-weight: bold;
+        }}
         #headbar-label {{
-            color: {self.text_color};
+            color: {c_text};
             padding: 0px 1px 0px 6px;
         }}
         #colorbtn {{
@@ -578,6 +708,7 @@ class VirtualKeyboard(Gtk.Window):
             button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
+            button.connect("touch-event", self.on_button_touch_end)
             if key_label not in self._STATIC_LABELS:
                 self.row_buttons.append(button)
             if key_event in self.modifiers:
@@ -627,6 +758,7 @@ class VirtualKeyboard(Gtk.Window):
             button.connect("pressed", self.on_cmd_press, n)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
+            button.connect("touch-event", self.on_button_touch_end)
             grid.attach(button, start_col + i * width, f_row_index, width, 1)
 
     def create_side_column(self, grid):
@@ -667,6 +799,7 @@ class VirtualKeyboard(Gtk.Window):
                 button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
+            button.connect("touch-event", self.on_button_touch_end)
             grid.attach(button, col, row_i, width, 1)
 
     # ------------------------------------------------------------------ key events
@@ -740,7 +873,11 @@ class VirtualKeyboard(Gtk.Window):
             )
             return
 
+        # ponytail: grab the label BEFORE emit_key() clears sticky
+        # modifiers and resets every button label back to unshifted.
+        label = widget.get_label()
         self.emit_key(key_event)
+        self._track_word(key_event, label)
         widget.get_style_context().add_class("pressed")
         self.delay_source = GLib.timeout_add(400, self.start_repeat, key_event)
 
@@ -757,6 +894,16 @@ class VirtualKeyboard(Gtk.Window):
         if not is_modifier and not is_capslock:
             widget.get_style_context().remove_class("pressed")
         widget.set_state_flags(Gtk.StateFlags.NORMAL, True)
+
+    def on_button_touch_end(self, widget, event):
+        # ponytail: GTK auto-emulates a normal tap as press/release + enter/
+        # leave, but a touch that's CANCELLED (palm rejection, the compositor
+        # grabbing it for a gesture, a second touch point appearing) fires
+        # neither, so on_button_release() never runs and the pressed/hover
+        # highlight is stuck until some unrelated redraw. Catch the raw touch
+        # end/cancel directly as a guaranteed release path.
+        if event.type in (Gdk.EventType.TOUCH_END, Gdk.EventType.TOUCH_CANCEL):
+            self.on_button_release(widget)
 
     def start_repeat(self, key_event):
         self.repeat_source = GLib.timeout_add(100, self.repeat_key, key_event)
@@ -778,6 +925,48 @@ class VirtualKeyboard(Gtk.Window):
                 self.update_modifier(mod_key, False)
         self.update_label(False)
 
+    _WORD_BREAKERS = {uinput.KEY_SPACE, uinput.KEY_ENTER, uinput.KEY_KPENTER,
+                       uinput.KEY_DOT, uinput.KEY_SLASH}
+    # Arrow keys move the cursor somewhere we can't see, and Delete removes
+    # whatever is to its right — after either, our buffer no longer reflects
+    # the real cursor position, so reset rather than guess.
+    _POSITION_BREAKERS = {uinput.KEY_UP, uinput.KEY_DOWN, uinput.KEY_LEFT,
+                           uinput.KEY_RIGHT, uinput.KEY_DELETE}
+
+    _WORD_TIMEOUT_MS = 1000
+
+    def _track_word(self, key_event, label):
+        if key_event in self._WORD_BREAKERS or key_event in self._POSITION_BREAKERS:
+            self.current_word = ""
+        elif key_event == uinput.KEY_BACKSPACE:
+            self.current_word = self.current_word[:-1]
+        elif len(label) == 1:
+            self.current_word += label
+        else:
+            return  # other control keys (Tab, F1..F12, etc.) leave word untouched
+        # ponytail: only reached for keys that actually change the shown word —
+        # letters/digits/punctuation typed, backspace, or a breaker clearing it.
+        # Unrelated keys (Tab, F-row, Esc, End...) must NOT restart the clock,
+        # or holding the keyboard idle-but-poking-F-keys would keep stale text
+        # on screen indefinitely.
+        self._reset_word_timeout()
+        self.word_label.set_label(self.current_word)
+
+    def _reset_word_timeout(self):
+        # ponytail: debounce — every keypress restarts this, so the preview
+        # only clears after the timeout with no typing, not that long after it started.
+        if hasattr(self, "_word_clear_source"):
+            GLib.source_remove(self._word_clear_source)
+        self._word_clear_source = GLib.timeout_add(
+            self._WORD_TIMEOUT_MS, self._clear_word_preview
+        )
+
+    def _clear_word_preview(self):
+        self.current_word = ""
+        self.word_label.set_label("")
+        del self._word_clear_source
+        return False
+
     # ------------------------------------------------------------------ config
 
     def read_settings(self):
@@ -790,6 +979,7 @@ class VirtualKeyboard(Gtk.Window):
                 self.config.read(self.CONFIG_FILE)
                 self.bg_color      = self.config.get("DEFAULT", "bg_color")
                 self.opacity       = self.config.get("DEFAULT", "opacity")
+                self.follow_qt = self.config.getboolean("DEFAULT", "follow_qt", fallback=False)
                 self.text_color    = self.config.get("DEFAULT", "text_color",    fallback="white")
                 self.width         = self.config.getint("DEFAULT", "width",      fallback=0)
                 self.height        = self.config.getint("DEFAULT", "height",     fallback=0)
@@ -806,6 +996,7 @@ class VirtualKeyboard(Gtk.Window):
         self.config["DEFAULT"] = {
             "bg_color":      self.bg_color,
             "opacity":       self.opacity,
+            "follow_qt": str(self.follow_qt),
             "text_color":    self.text_color,
             "width":         self.width,
             "height":        self.height,
