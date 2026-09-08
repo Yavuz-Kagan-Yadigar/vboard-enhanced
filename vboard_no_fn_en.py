@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """
-vboard_ua_wm — Ukrainian ЙЦУКЕН virtual keyboard (Wayland / layer-shell build)
+vboard_no_fn_en — no-Fn-row US ANSI virtual keyboard (classic / portable build)
 
 SUPPORTED ENVIRONMENTS
   • Linux with access to /dev/uinput (input group membership + udev rule) — required
-  • A Wayland session AND a compositor implementing zwlr_layer_shell_v1:
-      – wlroots family: Hyprland, Sway, river, Wayfire, labwc, dwl, Cage
-      – niri, COSMIC
-      – KDE Plasma / KWin (Wayland session)
-      – Mir based: Ubuntu Frame, Miriway
+  • Any desktop where GTK3 runs:
+      – X11 sessions: GNOME, KDE Plasma, XFCE, MATE, Cinnamon, i3, ...
+      – Wayland sessions: GNOME/Mutter included, KDE Plasma, Hyprland, Sway, ...
 
 UNSUPPORTED ENVIRONMENTS
-  • GNOME / Mutter — does not support wlr-layer-shell
-  • Weston — uses its own shell protocol
-  • X11 sessions — GtkLayerShell only works on the Wayland backend;
-    init_for_window() fails at startup
   • Non-Linux systems (Windows/macOS) — no uinput kernel interface
-  Use the classic build in those environments: vboard_ua.py / vboard_en.py
+  • Installations without write access to /dev/uinput
 
-NOTE: uinput emits scancodes at the kernel level, so the resulting character is
-decided by the session's xkb layout. Key labels assume the Ukrainian xkb layout
-(`setxkbmap ua`, variant "unicode"); with a different layout the label will not
-match the character produced.
+CAVEATS
+  • On Wayland, set_keep_above() and set_accept_focus(False) are no-ops: the
+    window may not stay on top and can steal focus when clicked. On compositors
+    implementing wlr-layer-shell (Hyprland, Sway, KWin, niri, COSMIC, ...) use
+    the vboard.py build, which solves both problems.
+  • uinput emits scancodes at the kernel level, so the resulting character is
+    decided by the session's xkb layout. Key labels assume a US ANSI layout.
 """
 import gi
 import uinput
@@ -30,12 +27,7 @@ import sys
 import configparser
 
 gi.require_version('Gtk', '3.0')
-gi.require_version('GtkLayerShell', '0.1')
-from gi.repository import Gtk, Gdk, GLib, GtkLayerShell
-
-# Sets the Wayland app_id so Hyprland windowrule can match class:^(vboard-ua)$ —
-# distinct from the other builds so each can be ruled separately
-GLib.set_prgname("vboard-ua")
+from gi.repository import Gtk, Gdk, GLib
 
 
 key_mapping = {
@@ -48,29 +40,29 @@ key_mapping = {
     uinput.KEY_EQUAL: "=",
     uinput.KEY_BACKSPACE: "Backspace",
     uinput.KEY_TAB: "Tab",
-    uinput.KEY_Q: "Й",  uinput.KEY_W: "Ц",  uinput.KEY_E: "У",
-    uinput.KEY_R: "К",  uinput.KEY_T: "Е",  uinput.KEY_Y: "Н",
-    uinput.KEY_U: "Г",  uinput.KEY_I: "Ш",  uinput.KEY_O: "Щ",
-    uinput.KEY_P: "З",
-    uinput.KEY_LEFTBRACE: "Х",
-    uinput.KEY_RIGHTBRACE: "Ї",
+    uinput.KEY_Q: "Q",  uinput.KEY_W: "W",  uinput.KEY_E: "E",
+    uinput.KEY_R: "R",  uinput.KEY_T: "T",  uinput.KEY_Y: "Y",
+    uinput.KEY_U: "U",  uinput.KEY_I: "I",  uinput.KEY_O: "O",
+    uinput.KEY_P: "P",
+    uinput.KEY_LEFTBRACE: "[",
+    uinput.KEY_RIGHTBRACE: "]",
     uinput.KEY_ENTER: "Enter",
     uinput.KEY_LEFTCTRL: "Ctrl_L",
-    uinput.KEY_A: "Ф",  uinput.KEY_S: "І",  uinput.KEY_D: "В",
-    uinput.KEY_F: "А",  uinput.KEY_G: "П",  uinput.KEY_H: "Р",
-    uinput.KEY_J: "О",  uinput.KEY_K: "Л",  uinput.KEY_L: "Д",
-    uinput.KEY_SEMICOLON: "Ж",
-    uinput.KEY_APOSTROPHE: "Є",
-    uinput.KEY_GRAVE: "'",
+    uinput.KEY_A: "A",  uinput.KEY_S: "S",  uinput.KEY_D: "D",
+    uinput.KEY_F: "F",  uinput.KEY_G: "G",  uinput.KEY_H: "H",
+    uinput.KEY_J: "J",  uinput.KEY_K: "K",  uinput.KEY_L: "L",
+    uinput.KEY_SEMICOLON: ";",
+    uinput.KEY_APOSTROPHE: "'",
+    uinput.KEY_GRAVE: "`",
     uinput.KEY_LEFTSHIFT: "Shift_L",
-    uinput.KEY_102ND: "/|",
-    uinput.KEY_BACKSLASH: "Ґ",
-    uinput.KEY_Z: "Я",  uinput.KEY_X: "Ч",  uinput.KEY_C: "С",
-    uinput.KEY_V: "М",  uinput.KEY_B: "И",  uinput.KEY_N: "Т",
-    uinput.KEY_M: "Ь",
-    uinput.KEY_COMMA: "Б",
-    uinput.KEY_DOT: "Ю",
-    uinput.KEY_SLASH: ".",      # UA: . key (shift -> ,)
+    uinput.KEY_102ND: "><|",    # physical key next to left shift
+    uinput.KEY_BACKSLASH: "\\",
+    uinput.KEY_Z: "Z",  uinput.KEY_X: "X",  uinput.KEY_C: "C",
+    uinput.KEY_V: "V",  uinput.KEY_B: "B",  uinput.KEY_N: "N",
+    uinput.KEY_M: "M",
+    uinput.KEY_COMMA: ",",
+    uinput.KEY_DOT: ".",
+    uinput.KEY_SLASH: "/",
     uinput.KEY_RIGHTSHIFT: "Shift_R",
     uinput.KEY_KPENTER: "Enter",
     uinput.KEY_LEFTALT: "Alt_L",  uinput.KEY_RIGHTALT: "Alt_R",
@@ -93,23 +85,12 @@ key_mapping = {
 }
 
 
-# Ukrainian ЙЦУКЕН alphabet as it appears on the key caps. Python's str.upper()
-# and str.lower() handle Cyrillic correctly, so no explicit case pairs are needed
-# (unlike Turkish, where dotted/dotless i needs special casing).
-_UA_ALPHABET = "ЙЦУКЕНГШЩЗХЇФІВАПРОЛДЖЄҐЯЧСМИТЬБЮ"
-
-# The physical "/" key (xkb <AB10>) carries "." unshifted and "," shifted.
-_UA_PUNCT_NORMAL = "."
-_UA_PUNCT_SHIFTED = ","
-_UA_PUNCT_TOGGLE = (_UA_PUNCT_NORMAL, _UA_PUNCT_SHIFTED)
-
-
 # Sibling builds share one directory. The switcher lists every vboard*.py next
 # to this file and reads each one's language out of its name, so adding a
 # translation is a matter of dropping it in beside the others — nothing here
 # enumerates them. LANG names this build; LANG_NAMES both labels a language
 # token and decides which tokens count as a language rather than a variant.
-LANG = "ua"
+LANG = "en"
 LANG_NAMES = {"en": "US ANSI", "ua": "Українська (ЙЦУКЕН)", "tr": "Türkçe (Q)"}
 
 
@@ -231,7 +212,8 @@ class VirtualKeyboard(Gtk.Window):
         self.width = 0
         self.height = 0
         self.prtsc_command = ""
-        self.custom_commands = {n: "" for n in range(1, 6)}
+        self.custom_command = ""
+        self.custom_label = ""
         self.read_settings()
 
         self.modifiers = {
@@ -246,72 +228,47 @@ class VirtualKeyboard(Gtk.Window):
         }
         self.caps_lock_on = False
 
-        # set_default_size is a no-op for layer-shell surfaces —
-        # the compositor negotiates size from content, not from GTK hints.
-        # set_size_request forces the actual widget allocation instead, which
-        # layer-shell does respect. Applied again in __main__ after
-        # init_for_window, once the surface actually exists.
         if self.width != 0:
-            self.set_size_request(self.width, self.height)
-
-        self.collapsed = False
+            self.set_default_size(self.width, self.height)
 
         self.header = Gtk.HeaderBar()
-        self.header.set_name("vboard-header")
+        self.header.set_show_close_button(True)
         self.buttons = []
         self.modifier_buttons = {}
         self.row_buttons = []
         self.header_labels = []
+        self.set_titlebar(self.header)
         self.set_default_icon_name("preferences-desktop-keyboard")
-        # set_show_close_button/set_decoration_layout only draw window controls
-        # when the HeaderBar is the window's titlebar. Ours is packed as a plain
-        # widget (layer-shell has no decoration frame), so GTK draws nothing —
-        # _add_window_controls() supplies our own minimize/close.
+        self.header.set_decoration_layout(":minimize,maximize,close")
 
         self.create_settings()
-        self.word_label = Gtk.Label(label="")
-        self.word_label.set_name("word-preview")
-        self.header.set_custom_title(self.word_label)
-        self.current_word = ""
 
         grid = Gtk.Grid()
         grid.set_row_homogeneous(True)
         grid.set_column_homogeneous(True)
-        grid.set_row_spacing(4)
-        grid.set_column_spacing(4)
         grid.set_margin_start(3)
         grid.set_margin_end(3)
-        grid.set_margin_top(4)
         grid.set_name("grid")
-        self.grid = grid
-        # layer-shell surfaces have no toplevel decoration frame, so
-        # set_titlebar/CSD silently does nothing — pack the HeaderBar as a
-        # regular widget instead, it's just a styled Gtk.Box either way.
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        vbox.pack_start(self.header, False, False, 0)
-        vbox.pack_start(grid, True, True, 0)
-        self.add(vbox)
+        self.add(grid)
         self.apply_css()
         self.device = uinput.Device(list(key_mapping.keys()))
 
-        # Ukrainian ЙЦУКЕН layout — grid width plan (SC=32):
+        # US ANSI layout — grid width plan (SC=32):
         # 1 unit = half a standard key width.
         # row_offsets: spacer units prepended to each row for stagger.
         # All zero for now; adjust here if stagger is needed.
         rows = [
-            ["Esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"],
-            ["'", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
-            ["Tab", "Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х", "Ї"],
-            ["CapsLock", "Ф", "І", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Є", "Ґ", "Home"],
-            ["Shift_L", "/|", "Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю", ".", "Shift_R"],
+            ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
+            ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]"],
+            ["CapsLock", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "\\", "Home"],
+            ["Shift_L", "><|", "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "Shift_R"],
             ["Ctrl_L", "Super_L", "Alt_L", "Space", "Alt_R", "Super_R", "Ctrl_R"],
         ]
-        self.row_offsets = [0, 0, 0, 0, 0, 0]
+        self.row_offsets = [0, 0, 0, 0, 0]
 
         for row_index, keys in enumerate(rows):
             self.create_row(grid, row_index, keys)
         self.create_side_column(grid)
-        self.create_frow_cmd_buttons(grid, f_row_index=0, start_col=26, count=5, width=2)
         self.update_label(False)
 
     # ------------------------------------------------------------------ settings bar
@@ -324,46 +281,16 @@ class VirtualKeyboard(Gtk.Window):
         self._add_header_label("Alpha:")
         self._add_header_button("+", self.change_opacity, True)
         self._add_header_button("-", self.change_opacity, False)
-        self._add_header_button(self.opacity)          # opacity label button (no callback)
+        self._add_header_button(self.opacity)
         self._add_header_label("Bck:")
         self.bg_color_btn = self._add_color_button(self._bg_rgba(), "Background color", self.on_bg_color_set)
         self._add_header_label("Text:")
         self.text_color_btn = self._add_color_button(self._text_rgba(), "Text color", self.on_text_color_set)
+        self.word_label = Gtk.Label(label="")
+        self.word_label.set_name("word-preview")
+        self.header.set_custom_title(self.word_label)
+        self.current_word = ""
         self._add_qt_toggle()
-        self._add_window_controls()
-
-    def _add_window_controls(self):
-        """Minimize/close buttons — deliberately kept out of self.buttons so ☰
-        does not hide them, and pinned to the right edge with pack_end."""
-        for label, tooltip, callback in (
-            ("✕", "Close", self.on_close),
-            ("—", "Minimize / restore", self.on_minimize),
-        ):
-            button = Gtk.Button(label=label)
-            button.set_name("headbar-button")
-            button.set_can_focus(False)
-            button.set_tooltip_text(tooltip)
-            button.connect("clicked", callback)
-            self.header.pack_end(button)
-            if label == "—":
-                self.minimize_btn = button
-
-    def on_close(self, widget=None):
-        self.save_settings()
-        Gtk.main_quit()
-
-    def on_minimize(self, widget=None):
-        """A layer-shell surface cannot be iconified — hide the key grid
-        instead and leave just the header bar (shade)."""
-        self.collapsed = not self.collapsed
-        if self.collapsed:
-            self.grid.hide()
-            self.set_size_request(-1, -1)
-        else:
-            self.grid.show_all()
-            if self.width != 0:
-                self.set_size_request(self.width, self.height)
-        self.minimize_btn.set_label("▣" if self.collapsed else "—")
 
     def _add_header_button(self, label, callback=None, cb_arg=None):
         button = Gtk.Button(label=label)
@@ -378,25 +305,6 @@ class VirtualKeyboard(Gtk.Window):
             self.opacity_btn.set_tooltip_text("opacity")
         self.header.add(button)
         self.buttons.append(button)
-
-    def on_resize(self, widget, event):
-        # layer-shell fires configure-event during the initial natural-size
-        # negotiation too (before our requested size is ever applied). Ignore
-        # resizes until a size has been explicitly applied via GtkLayerShell,
-        # otherwise this natural size overwrites the config.
-        if not getattr(self, "_size_applied", False) or self.collapsed:
-            return
-        self.width, self.height = self.get_size()
-
-    def change_visibility(self, widget=None):
-        for button in self.buttons:
-            if button.get_label() != "☰":
-                button.set_visible(not button.get_visible())
-        for label in self.header_labels:
-            label.set_visible(not label.get_visible())
-        self.lang_combo.set_visible(not self.lang_combo.get_visible())
-        self.bg_color_btn.set_visible(not self.bg_color_btn.get_visible())
-        self.text_color_btn.set_visible(not self.text_color_btn.get_visible())
 
     def _add_header_label(self, text):
         """Caption for the control that follows it. Hidden by ☰ along with the
@@ -431,6 +339,19 @@ class VirtualKeyboard(Gtk.Window):
         button.connect("color-set", callback)
         self.header.add(button)
         return button
+
+    def on_resize(self, widget, event):
+        self.width, self.height = self.get_size()
+
+    def change_visibility(self, widget=None):
+        for button in self.buttons:
+            if button.get_label() != "☰":
+                button.set_visible(not button.get_visible())
+        for label in self.header_labels:
+            label.set_visible(not label.get_visible())
+        self.lang_combo.set_visible(not self.lang_combo.get_visible())
+        self.bg_color_btn.set_visible(not self.bg_color_btn.get_visible())
+        self.text_color_btn.set_visible(not self.text_color_btn.get_visible())
 
     def _bg_rgba(self):
         r, g, b = self._parse_bg()
@@ -520,7 +441,6 @@ class VirtualKeyboard(Gtk.Window):
             if s == 0:
                 c = int(v * 255)
                 return f"{c}, {c}, {c}"
-            # hue from original lighter rgb
             rng_i = max(r, g, b) - min(r, g, b)
             if r >= g and r >= b:   h = ((g - b) / rng_i) % 6
             elif g >= r and g >= b: h = (b - r) / rng_i + 2
@@ -535,6 +455,8 @@ class VirtualKeyboard(Gtk.Window):
             return f"{int(rgb[0]*255)}, {int(rgb[1]*255)}, {int(rgb[2]*255)}"
         except Exception:
             return self._lighter_color()
+
+    # ------------------------------------------------------------------ CSS
 
     # ------------------------------------------------------------------ build switch
 
@@ -619,8 +541,6 @@ class VirtualKeyboard(Gtk.Window):
             return
         Gtk.main_quit()
 
-    # ------------------------------------------------------------------ CSS
-
     def _add_qt_toggle(self):
         """QT checkbox — when ticked, every surface colour is pulled live from
         the running Qt/KDE scheme instead of from bg_color. Hidden by the menu
@@ -649,13 +569,10 @@ class VirtualKeyboard(Gtk.Window):
         c_accent  = qt["accent"]  if qt else self._accent_color()
         c_pressed = qt["pressed"] if qt else self._pressed_bg_color()
         css = f"""
-        headerbar, headerbar.titlebar, GtkHeaderBar, #vboard-header {{
+        headerbar {{
             background-color: rgba({c_bg}, {self.opacity});
-            background-image: none;
             border: 0px;
             box-shadow: none;
-            min-height: 24px;
-            padding: 0px 4px;
         }}
         headerbar button {{
             min-width: 20px;
@@ -664,15 +581,11 @@ class VirtualKeyboard(Gtk.Window):
             margin: 0px;
         }}
         headerbar .titlebutton {{
-            min-width: 24px;
-            min-height: 16px;
+            min-width: 30px;
+            min-height: 20px;
         }}
         headerbar button label {{
             color: {c_text};
-        }}
-        #word-preview {{
-            color: {c_text};
-            font-weight: bold;
         }}
         #headbar-button, #langcombo button.combo {{
             background-image: none;
@@ -683,38 +596,23 @@ class VirtualKeyboard(Gtk.Window):
         #grid button label {{
             color: {c_text};
         }}
-        #grid button,
-        #grid button:active,
-        #grid button:focus,
-        #grid button:checked {{
-            border: 1px solid transparent;
-            border-image: none;
+        #grid button {{
+            border: none;
             background-image: none;
-            box-shadow: none;
-            outline: none;
-            outline-color: transparent;
-            outline-width: 0;
-            outline-offset: 0;
-            text-shadow: none;
-            -gtk-icon-shadow: none;
-            -gtk-outline-radius: 0;
             background-color: rgba({c_key}, {self.opacity});
             padding: 0px;
-            margin: 0px;
-            transition: none;
-        }}
-        #grid button:hover {{
-            background-color: rgba({c_pressed}, {self.opacity});
+            margin: 2px;
         }}
         button {{
             background-color: transparent;
             color: {c_text};
         }}
+        #grid button:hover {{
+            border: 1px solid {c_accent};
+        }}
         #grid button.pressed,
-        #grid button.pressed:hover,
-        #grid button.pressed:active,
-        #grid button.pressed:focus {{
-            border-color: {c_text};
+        #grid button.pressed:hover {{
+            border: 1px solid {c_text};
             background-color: rgba({c_pressed}, {self.opacity});
         }}
         tooltip {{
@@ -724,6 +622,10 @@ class VirtualKeyboard(Gtk.Window):
         #langcombo button.combo {{
             color: {c_text};
             padding: 2px;
+        }}
+        #word-preview {{
+            color: {c_text};
+            font-weight: bold;
         }}
         #headbar-label {{
             color: {c_text};
@@ -758,12 +660,12 @@ class VirtualKeyboard(Gtk.Window):
 
     # Key widths in grid units (1 unit = 0.5 standard key width); default 2 (square key)
     _KEY_WIDTHS = {
-        "'": 2, "-": 2, "=": 2,
+        "`": 2, "-": 2, "=": 2,
         "Backspace": 4,
         "Tab": 4,
-        "Х": 2, "Ї": 2,
+        "[": 2, "]": 2,
         "CapsLock": 5,
-        "Ґ": 3,
+        "\\": 3,
         "Enter": 3, "Home": 3,
         "Shift_L": 4, "Shift_R": 4,
         "Space": 14,
@@ -773,8 +675,11 @@ class VirtualKeyboard(Gtk.Window):
     }
     _MODIFIER_SUFFIXES = ("Shift_R", "Shift_L", "Alt_L", "Alt_R", "Ctrl_L", "Ctrl_R", "Super_L", "Super_R")
 
+    # Keys whose label never changes — the F-row is deliberately kept out of
+    # row_buttons because update_label's symbol_map indices assume row_buttons
+    # starts at the number row.
     _STATIC_LABELS = {"Esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8",
-                       "F9", "F10", "F11", "F12"}
+                      "F9", "F10", "F11", "F12"}
 
     def create_row(self, grid, row_index, keys):
         col = 0
@@ -791,14 +696,10 @@ class VirtualKeyboard(Gtk.Window):
                 continue
             display = key_label[:-2] if key_label in self._MODIFIER_SUFFIXES else key_label
             button = Gtk.Button(label=display)
-            button.set_can_focus(False)
-            button.set_relief(Gtk.ReliefStyle.NONE)
-            button.get_style_context().add_class("flat")
             button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
             button.connect("touch-event", self.on_button_touch_end)
-            button.connect("enter-notify-event", self.on_button_enter)
             if key_label not in self._STATIC_LABELS:
                 self.row_buttons.append(button)
             if key_event in self.modifiers:
@@ -810,16 +711,16 @@ class VirtualKeyboard(Gtk.Window):
             col += width
 
     def update_label(self, show_symbols):
-        # Number row: ' 1 2 3 4 5 6 7 8 9 0 - =  (row_buttons indices 0-12)
+        # Number row: ` 1 2 3 4 5 6 7 8 9 0 - =  (row_buttons indices 0-12)
         symbol_map = [
-            (0,  "'", 'ʼ'),    # U+02BC modifier apostrophe on shift
+            (0,  '`', '~'),
             (1,  '1', '!'),
-            (2,  '2', '"'),
-            (3,  '3', '№'),
-            (4,  '4', ';'),
+            (2,  '2', '@'),
+            (3,  '3', '#'),
+            (4,  '4', '$'),
             (5,  '5', '%'),
-            (6,  '6', ':'),
-            (7,  '7', '?'),
+            (6,  '6', '^'),
+            (7,  '7', '&'),
             (8,  '8', '*'),
             (9,  '9', '('),
             (10, '0', ')'),
@@ -830,77 +731,63 @@ class VirtualKeyboard(Gtk.Window):
             self.row_buttons[pos].set_label(shifted if show_symbols else normal)
 
         use_upper = show_symbols ^ self.caps_lock_on
-        letter_keys = set(_UA_ALPHABET)
+        letter_keys = set("QWERTYUIOPASDFGHJKLZXCVBNM")
         for btn in self.row_buttons:
             lbl = btn.get_label()
             if lbl.upper() in letter_keys:
                 btn.set_label(lbl.upper() if use_upper else lbl.lower())
-            elif lbl in _UA_PUNCT_TOGGLE:
-                btn.set_label(_UA_PUNCT_SHIFTED if show_symbols else _UA_PUNCT_NORMAL)
 
-    def create_frow_cmd_buttons(self, grid, f_row_index, start_col, count, width):
-        """Fills the free space to the right of the F-row with CMD buttons,
-        each bound to its own custom_command_N."""
-        for i in range(count):
-            n = i + 1
-            button = Gtk.Button(label=f"CMD{n}")
-            button.set_can_focus(False)
-            button.set_relief(Gtk.ReliefStyle.NONE)
-            button.get_style_context().add_class("flat")
-            button.set_tooltip_text(f"custom_command_{n} (config)")
-            button.connect("pressed", self.on_cmd_press, n)
-            button.connect("released", self.on_button_release)
-            button.connect("leave-notify-event", self.on_button_release)
-            button.connect("touch-event", self.on_button_touch_end)
-            button.connect("enter-notify-event", self.on_button_enter)
-            grid.attach(button, start_col + i * width, f_row_index, width, 1)
 
     def create_side_column(self, grid):
-        """Side column — right edge at col 36 (flush with the F-row CMD strip).
-        Del:   row=1, col=30, w=6
-        Enter: row=2, col=28, w=8
-        End:   row=3, col=33, w=3
-        CMD:   row=4, col=30, w=2  ↑: row=4, col=32, w=2
-        ←:     row=5, col=30, w=2  ↓: row=5, col=32, w=2  →: row=5, col=34, w=2
-        PrtSc: row=4, col=34, w=2
+        """Side column — right edge at col 35.
+        Del:   row=0, col=30, w=5
+        Enter: row=1, col=28, w=7
+        End:   row=2, col=32, w=3
+        CMD:   row=3, col=29, w=2   ↑: row=3, col=31, w=2
+        ←:     row=4, col=29, w=2   ↓: row=4, col=31, w=2   →: row=4, col=33, w=2
+        PrtSc: row=3, col=33, w=2
         """
         # (row, col, label, key_event, width)
         side_keys = [
-            (1, 30, "Del",   uinput.KEY_DELETE, 6),
-            (2, 28, "Enter", uinput.KEY_ENTER,  8),
-            (3, 33, "End",   uinput.KEY_END,    3),
-            (4, 30, "CMD",   None,              2),
-            (4, 32, "↑",     uinput.KEY_UP,     2),
-            (5, 30, "←",     uinput.KEY_LEFT,   2),
-            (5, 32, "↓",     uinput.KEY_DOWN,   2),
-            (5, 34, "→",     uinput.KEY_RIGHT,  2),
-            (4, 34, "PrtSc", None,              2),
+            (0, 30, "Del",   uinput.KEY_DELETE, 5),
+            (1, 28, "Enter", uinput.KEY_ENTER,  7),
+            (2, 32, "End",   uinput.KEY_END,    3),
+            (3, 29, "CMD",   None,              2),
+            (3, 31, "↑",     uinput.KEY_UP,     2),
+            (4, 29, "←",     uinput.KEY_LEFT,   2),
+            (4, 31, "↓",     uinput.KEY_DOWN,   2),
+            (4, 33, "→",     uinput.KEY_RIGHT,  2),
+            (3, 33, "PrtSc", None,              2),
         ]
         tooltips = {
             "Del": "Delete", "Enter": "Enter", "End": "End",
-            "CMD": "custom_command_1 (config)",
+            "CMD": "custom_command (config)",
             "↑": "Up", "←": "Left", "↓": "Down", "→": "Right",
             "PrtSc": "Print Screen",
         }
         for row_i, col, label, key_event, width in side_keys:
             button = Gtk.Button(label=label)
-            button.set_can_focus(False)
-            button.set_relief(Gtk.ReliefStyle.NONE)
-            button.get_style_context().add_class("flat")
             button.set_tooltip_text(tooltips[label])
             if label == "PrtSc":
                 button.connect("pressed", self.on_prtsc_press)
             elif label == "CMD":
-                button.connect("pressed", self.on_cmd_press, 1)
+                button.connect("pressed", self.on_cmd_press)
+                button.set_label(self.custom_label.strip() or "CMD")
             else:
                 button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
             button.connect("touch-event", self.on_button_touch_end)
-            button.connect("enter-notify-event", self.on_button_enter)
             grid.attach(button, col, row_i, width, 1)
 
     # ------------------------------------------------------------------ key events
+
+    def on_combo_press(self, widget, mod_key, key_event):
+        """Sends mod+key combo without disturbing modifier toggle state."""
+        self.device.emit(mod_key, 1)
+        self.device.emit(key_event, 1)
+        self.device.emit(key_event, 0)
+        self.device.emit(mod_key, 0)
 
     def _show_config_dialog(self, title, key_name):
         dialog = Gtk.MessageDialog(
@@ -911,26 +798,25 @@ class VirtualKeyboard(Gtk.Window):
             text=title,
         )
         dialog.format_secondary_text(
-            f"Відкрийте файл нижче й додайте рядок:\n"
-            f"  {key_name} = <ваша команда>\n\n"
+            f"Please open the following file and add:\n"
+            f"  {key_name} = <your command>\n\n"
             f"{self.CONFIG_FILE}"
         )
         dialog.run()
         dialog.destroy()
 
-    def on_cmd_press(self, widget, n):
-        cmd = self.custom_commands.get(n, "")
-        key = f"custom_command_{n}"
-        if cmd.strip():
-            GLib.spawn_command_line_async(cmd.strip())
+    def on_cmd_press(self, widget):
+        if self.custom_command.strip():
+            GLib.spawn_command_line_async(self.custom_command.strip())
         else:
-            self._show_config_dialog(f"{key} не налаштовано", key)
+            self._show_config_dialog(
+                "CMD command not configured", "custom_command")
 
     def on_prtsc_press(self, widget):
         if self.prtsc_command.strip():
             GLib.spawn_command_line_async(self.prtsc_command.strip())
         else:
-            self._show_config_dialog("Команду Print Screen не налаштовано", "prtsc_command")
+            self._show_config_dialog("Print Screen command not configured", "prtsc_command")
 
     def update_modifier(self, key_event, value):
         self.modifiers[key_event] = value
@@ -979,16 +865,12 @@ class VirtualKeyboard(Gtk.Window):
         if hasattr(self, "repeat_source"):
             GLib.source_remove(self.repeat_source)
             del self.repeat_source
-        # Keep the pressed look on modifier and CapsLock buttons
-        if widget not in self.modifier_buttons.values() and widget is not self.caps_lock_btn:
+        # Keep pressed appearance for active modifier and CapsLock buttons
+        is_modifier = widget in self.modifier_buttons.values()
+        is_capslock = hasattr(self, "caps_lock_btn") and widget is self.caps_lock_btn
+        if not is_modifier and not is_capslock:
             widget.get_style_context().remove_class("pressed")
         widget.set_state_flags(Gtk.StateFlags.NORMAL, True)
-        # On Wayland, partial damage-region calculation can leave border/hover
-        # artifacts behind; force a full redraw of the widget and its parent.
-        widget.queue_draw()
-        parent = widget.get_parent()
-        if parent is not None:
-            parent.queue_draw()
 
     def on_button_touch_end(self, widget, event):
         # ponytail: GTK auto-emulates a normal tap as press/release + enter/
@@ -999,11 +881,6 @@ class VirtualKeyboard(Gtk.Window):
         # end/cancel directly as a guaranteed release path.
         if event.type in (Gdk.EventType.TOUCH_END, Gdk.EventType.TOUCH_CANCEL):
             self.on_button_release(widget)
-
-    def on_button_enter(self, widget, *args):
-        # Force a redraw on hover enter as well, to avoid the same
-        # damage-region artifacts.
-        widget.queue_draw()
 
     def start_repeat(self, key_event):
         self.repeat_source = GLib.timeout_add(100, self.repeat_key, key_event)
@@ -1077,31 +954,32 @@ class VirtualKeyboard(Gtk.Window):
         try:
             if os.path.exists(self.CONFIG_FILE):
                 self.config.read(self.CONFIG_FILE)
-                self.bg_color      = self.config.get("DEFAULT", "bg_color")
-                self.opacity       = self.config.get("DEFAULT", "opacity")
+                self.bg_color       = self.config.get("DEFAULT", "bg_color")
+                self.opacity        = self.config.get("DEFAULT", "opacity")
                 self.follow_qt = self.config.getboolean("DEFAULT", "follow_qt", fallback=False)
-                self.text_color    = self.config.get("DEFAULT", "text_color",    fallback="white")
-                self.width         = self.config.getint("DEFAULT", "width",      fallback=0)
-                self.height        = self.config.getint("DEFAULT", "height",     fallback=0)
-                self.prtsc_command = self.config.get("DEFAULT", "prtsc_command", fallback="")
-                self.custom_commands = {
-                    n: self.config.get("DEFAULT", f"custom_command_{n}", fallback="")
-                    for n in range(1, 6)
-                }
+                self.text_color     = self.config.get("DEFAULT", "text_color",     fallback="white")
+                self.width          = self.config.getint("DEFAULT", "width",       fallback=0)
+                self.height         = self.config.getint("DEFAULT", "height",      fallback=0)
+                self.prtsc_command  = self.config.get("DEFAULT", "prtsc_command",  fallback="")
+                self.custom_command = self.config.get(
+                    "DEFAULT", "custom_command", fallback="")
+                self.custom_label = self.config.get(
+                    "DEFAULT", "custom_label", fallback="")
                 print(f"rgba: {self.bg_color}, {self.opacity}")
         except configparser.Error as e:
             print(f"Warning: Could not read config file ({e}). Using defaults.")
 
     def save_settings(self):
         self.config["DEFAULT"] = {
-            "bg_color":      self.bg_color,
-            "opacity":       self.opacity,
+            "bg_color":       self.bg_color,
+            "opacity":        self.opacity,
             "follow_qt": str(self.follow_qt),
-            "text_color":    self.text_color,
-            "width":         self.width,
-            "height":        self.height,
-            "prtsc_command": self.prtsc_command,
-            **{f"custom_command_{n}": v for n, v in self.custom_commands.items()},
+            "text_color":     self.text_color,
+            "width":          self.width,
+            "height":         self.height,
+            "prtsc_command":  self.prtsc_command,
+            "custom_command": self.custom_command,
+            "custom_label": self.custom_label,
         }
         try:
             with open(self.CONFIG_FILE, "w") as f:
@@ -1115,172 +993,6 @@ if __name__ == "__main__":
     win.connect("configure-event", win.on_resize)
     win.connect("delete-event", lambda w, e: win.save_settings() or False)
     win.connect("destroy", Gtk.main_quit)
-
-    # Layer-shell surface instead of a normal toplevel — KEYBOARD_MODE_NONE
-    # guarantees the surface never takes focus while still delivering pointer
-    # clicks, which a plain Gtk.Window + windowrule can't do.
-    GtkLayerShell.init_for_window(win)
-    GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
-    GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
-    # Anchor top+left so margins act as an absolute x/y position — a floating
-    # layer-shell surface has no WM to drag via begin_move_drag, so dragging
-    # is done by hand: track pointer delta, adjust margins.
-    GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.TOP, True)
-    GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.LEFT, True)
-    GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, 100)
-    GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, 100)
-    GtkLayerShell.set_exclusive_zone(win, -1)
-
-    if win.width != 0:
-        win.set_size_request(win.width, win.height)
-
-    # Let the layer-shell surface finish its initial negotiation (which fires
-    # spurious configure-events with GTK's natural/minimum size) before
-    # trusting configure-event to update self.width/height.
-    def _enable_resize_tracking():
-        win._size_applied = True
-        return False
-    GLib.timeout_add(500, _enable_resize_tracking)
-
-    win._drag_start = None
-    win._pen_last_apply = None
-    win._drag_bounds = None
-    _PEN_THROTTLE_MS = 20  # ~one compositor frame, see _is_pen comment below
-    _MIN_VISIBLE_PX = 48  # keep at least this much of the header on screen
-
-    def _monitor_size():
-        # ponytail: margins here are relative to whichever output the
-        # layer-shell surface is on, so clamp against that output's size, not
-        # some global desktop size (Wayland has no such thing anyway).
-        display = Gdk.Display.get_default()
-        gdk_window = win.get_window()
-        monitor = display.get_monitor_at_window(gdk_window) if gdk_window else None
-        monitor = monitor or display.get_primary_monitor() or display.get_monitor(0)
-        if monitor is None:
-            return None
-        geo = monitor.get_geometry()
-        return geo.width, geo.height
-
-    def _clamp_pair(left, top, mon_w, mon_h):
-        left = max(0, min(left, max(0, mon_w - _MIN_VISIBLE_PX)))
-        top = max(0, min(top, max(0, mon_h - _MIN_VISIBLE_PX)))
-        return left, top
-
-    def _clamp_to_monitor(*_args):
-        # ponytail: a drag only re-clamps while it's happening. If the output
-        # rotates (or otherwise shrinks) while the keyboard is just sitting
-        # there, the margins set from before can suddenly overshoot the new,
-        # smaller geometry and leave it stranded off-screen with no drag to
-        # fix it. Re-clamp on every monitor geometry change too.
-        size = _monitor_size()
-        if size is None:
-            return
-        L = GtkLayerShell.get_margin(win, GtkLayerShell.Edge.LEFT)
-        T = GtkLayerShell.get_margin(win, GtkLayerShell.Edge.TOP)
-        new_L, new_T = _clamp_pair(L, T, *size)
-        if new_L != L:
-            GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, new_L)
-        if new_T != T:
-            GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, new_T)
-
-    def _in_header(widget, x, y):
-        alloc = win.header.get_allocation()
-        wx, wy = win.header.translate_coordinates(win, 0, 0) or (0, 0)
-        return wx <= x <= wx + alloc.width and wy <= y <= wy + alloc.height
-
-    def _is_pen(event):
-        src = event.get_source_device()
-        return src is not None and src.get_source() in (
-            Gdk.InputSource.PEN, Gdk.InputSource.ERASER
-        )
-
-    def _abs_pos(event):
-        # ponytail: return the pointer's screen position, and it has to be done
-        # per input source because GDK-Wayland is not consistent:
-        #  - touch / mouse: event.x_root is a stable absolute frame -> use it.
-        #  - tablet tools: event.x_root is delivered surface-relative, so with
-        #    the surface moving under the pen mid-drag it becomes a feedback
-        #    loop (window_speed = pen_speed - window_speed) and the window
-        #    tracks at half speed. event.x IS surface-relative for the pen, so
-        #    event.x + the layer-shell margin (the surface origin, anchored
-        #    top+left) reconstructs a true absolute position.
-        # Using event.x + margin for touch instead overshoots (its event.x is
-        # already absolute there), hence the split.
-        if _is_pen(event):
-            return (
-                event.x + GtkLayerShell.get_margin(win, GtkLayerShell.Edge.LEFT),
-                event.y + GtkLayerShell.get_margin(win, GtkLayerShell.Edge.TOP),
-            )
-        return (event.x_root, event.y_root)
-
-    def on_header_press(widget, event):
-        if event.button != 1 or not _in_header(widget, event.x, event.y):
-            return
-        win._pen_last_apply = None
-        win._drag_bounds = _monitor_size()
-        ax, ay = _abs_pos(event)
-        win._drag_start = (
-            ax, ay,
-            GtkLayerShell.get_margin(win, GtkLayerShell.Edge.LEFT),
-            GtkLayerShell.get_margin(win, GtkLayerShell.Edge.TOP),
-        )
-
-    def on_header_motion(widget, event):
-        if win._drag_start is None:
-            return
-        if _is_pen(event):
-            # ponytail: unlike mouse/touch motion, GDK does not coalesce tablet
-            # -tool samples to the compositor's frame rate, so a fast/long pen
-            # drag fires set_margin() far faster than the compositor actually
-            # applies + re-derives surface-relative coordinates from it. Each
-            # _abs_pos() reconstruction then reads back a margin that hasn't
-            # visually landed yet, and that small error compounds sample after
-            # sample into growing, then runaway, oscillation. Cap pen updates
-            # to roughly one per frame so the compositor keeps up.
-            now = event.time
-            last = win._pen_last_apply
-            if last is not None and ((now - last) & 0xFFFFFFFF) < _PEN_THROTTLE_MS:
-                return
-            win._pen_last_apply = now
-        sx, sy, ox, oy = win._drag_start
-        ax, ay = _abs_pos(event)
-        new_left = int(ox + ax - sx)
-        new_top = int(oy + ay - sy)
-        if win._drag_bounds is not None:
-            new_left, new_top = _clamp_pair(new_left, new_top, *win._drag_bounds)
-        else:
-            new_left, new_top = max(0, new_left), max(0, new_top)
-        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, new_left)
-        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, new_top)
-
-    def on_header_release(widget, event):
-        win._drag_start = None
-        win._pen_last_apply = None
-        win._drag_bounds = None
-
-    # ponytail: Gtk.HeaderBar is a windowless widget — add_events on it is a
-    # no-op since it has no GdkWindow. Listen on the toplevel instead and
-    # filter by whether the click/motion falls within the header's allocation.
-    win.add_events(
-        Gdk.EventMask.BUTTON_PRESS_MASK
-        | Gdk.EventMask.BUTTON_RELEASE_MASK
-        | Gdk.EventMask.POINTER_MOTION_MASK
-    )
-    win.connect("button-press-event", on_header_press)
-    win.connect("motion-notify-event", on_header_motion)
-    win.connect("button-release-event", on_header_release)
-
-    # ponytail: catch orientation changes / output swaps that happen while not
-    # dragging (see _clamp_to_monitor above).
-    _display = Gdk.Display.get_default()
-    for _i in range(_display.get_n_monitors()):
-        _display.get_monitor(_i).connect("invalidate", _clamp_to_monitor)
-    _display.connect(
-        "monitor-added",
-        lambda d, m: (m.connect("invalidate", _clamp_to_monitor), _clamp_to_monitor()),
-    )
-
     win.show_all()
     win.change_visibility()
-    _clamp_to_monitor()
     Gtk.main()

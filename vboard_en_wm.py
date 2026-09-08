@@ -101,6 +101,101 @@ LANG = "en"
 LANG_NAMES = {"en": "US ANSI", "ua": "Українська (ЙЦУКЕН)", "tr": "Türkçe (Q)"}
 
 
+SYSTEM_QT_LABEL = "Follow System Qt Theme"
+
+
+def _rgb_triplet(raw):
+    parts = [p.strip() for p in str(raw).split(",")[:3]]
+    if len(parts) == 3 and all(p.isdigit() for p in parts):
+        return tuple(max(0, min(255, int(p))) for p in parts)
+    return None
+
+
+def _mix(base, target, t):
+    """base moved a fraction t toward target (t may be negative)."""
+    return tuple(max(0, min(255, round(c + t * (d - c)))) for c, d in zip(base, target))
+
+
+def _saturate(rgb, f):
+    """Push a colour's channels away from its brightest one -> more chroma."""
+    mx = max(rgb)
+    return tuple(max(0, min(255, round(mx - (mx - c) * f))) for c in rgb)
+
+
+def _kde_scheme_colors(path):
+    """Every vboard surface as an "r,g,b" string, from one KDE scheme ini, or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(path, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+
+    def get(group, key):
+        try:
+            return _rgb_triplet(parser.get(group, key))
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            return None
+
+    bg = get("Colors:Window", "BackgroundNormal")
+    if not bg:
+        return None
+    fg = get("Colors:Window", "ForegroundNormal") or (255, 255, 255)
+    accent = (get("Colors:Window", "DecorationFocus")
+              or get("Colors:Button", "DecorationHover") or fg)
+    pressed = get("Colors:Selection", "BackgroundNormal") or accent
+
+    # Material-You style schemes keep every surface a near-neutral near-black, so
+    # pull the scheme's own accent hue back into the surfaces -- otherwise the
+    # keyboard reads as flat grey. Tunables:
+    SURFACE_SAT = 1.8   # chroma boost on the window colour
+    KEY_TINT    = 0.28  # how far the key face is mixed toward the accent
+    GAP_DARKEN  = 0.40  # how much deeper the inter-key gaps sit
+    bg = _saturate(bg, SURFACE_SAT)
+    key_bg = _mix(bg, accent, KEY_TINT)
+    top_bg = _mix(bg, (0, 0, 0), GAP_DARKEN)
+
+    def s(t):
+        return "%d,%d,%d" % t
+
+    return {
+        "bg":      s(bg),
+        "top_bg":  s(top_bg),
+        "key_bg":  s(key_bg),
+        "pressed": s(pressed),
+        "accent":  "rgb(%s)" % s(accent),
+        "text":    "rgb(%s)" % s(fg),
+    }
+
+
+def _qtct_scheme_path(conf):
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(conf, encoding="utf-8")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return None
+    return parser.get("Appearance", "color_scheme_path", fallback="") or None
+
+
+def read_system_qt_theme():
+    """Full colour set of the active Qt/KDE scheme (THEMES-style dict), or None."""
+    cfg = os.path.expanduser("~/.config")
+    paths = []
+    for name in ("qt6ct", "qt5ct"):
+        conf = os.path.join(cfg, name, name + ".conf")
+        if os.path.isfile(conf):
+            paths.append(_qtct_scheme_path(conf))
+    paths.append(os.path.join(cfg, "kdeglobals"))
+    for path in paths:
+        got = _kde_scheme_colors(path)
+        if got:
+            return got
+    return None
+
+
 class VirtualKeyboard(Gtk.Window):
     def __init__(self):
         super().__init__(title="Virtual Keyboard", name="toplevel")
@@ -118,6 +213,7 @@ class VirtualKeyboard(Gtk.Window):
         self.config = configparser.ConfigParser()
 
         self.bg_color = "0, 0, 0"
+        self.follow_qt = False
         self.opacity = "0.90"
         self.text_color = "white"
         self.width = 0
@@ -221,6 +317,7 @@ class VirtualKeyboard(Gtk.Window):
         self.bg_color_btn = self._add_color_button(self._bg_rgba(), "Background color", self.on_bg_color_set)
         self._add_header_label("Text:")
         self.text_color_btn = self._add_color_button(self._text_rgba(), "Text color", self.on_text_color_set)
+        self._add_qt_toggle()
         self._add_window_controls()
 
     def _add_window_controls(self):
@@ -512,11 +609,36 @@ class VirtualKeyboard(Gtk.Window):
 
     # ------------------------------------------------------------------ CSS
 
+    def _add_qt_toggle(self):
+        """QT checkbox — when ticked, every surface colour is pulled live from
+        the running Qt/KDE scheme instead of from bg_color. Hidden by the menu
+        button like the other controls."""
+        self.qt_toggle = Gtk.CheckButton(label="QT")
+        self.qt_toggle.set_name("headbar-button")
+        self.qt_toggle.set_can_focus(False)
+        self.qt_toggle.set_active(self.follow_qt)
+        self.qt_toggle.set_tooltip_text("Follow the system Qt / KDE colour scheme")
+        self.qt_toggle.connect("toggled", self.on_qt_toggled)
+        self.header.add(self.qt_toggle)
+        self.buttons.append(self.qt_toggle)
+
+    def on_qt_toggled(self, widget):
+        self.follow_qt = widget.get_active()
+        self.apply_css()
+        self.save_settings()
+
     def apply_css(self):
         provider = Gtk.CssProvider()
+        qt = read_system_qt_theme() if self.follow_qt else None
+        c_bg      = qt["bg"]      if qt else self.bg_color
+        c_text    = qt["text"]    if qt else self.text_color
+        c_top     = qt["top_bg"]  if qt else self._darker_color()
+        c_key     = qt["key_bg"]  if qt else self._lighter_color()
+        c_accent  = qt["accent"]  if qt else self._accent_color()
+        c_pressed = qt["pressed"] if qt else self._pressed_bg_color()
         css = f"""
         headerbar, headerbar.titlebar, GtkHeaderBar, #vboard-header {{
-            background-color: rgba({self.bg_color}, {self.opacity});
+            background-color: rgba({c_bg}, {self.opacity});
             background-image: none;
             border: 0px;
             box-shadow: none;
@@ -534,20 +656,20 @@ class VirtualKeyboard(Gtk.Window):
             min-height: 16px;
         }}
         headerbar button label {{
-            color: {self.text_color};
+            color: {c_text};
         }}
         #word-preview {{
-            color: {self.text_color};
+            color: {c_text};
             font-weight: bold;
         }}
         #headbar-button, #langcombo button.combo {{
             background-image: none;
         }}
         #toplevel {{
-            background-color: rgba({self._darker_color()}, {self.opacity});
+            background-color: rgba({c_top}, {self.opacity});
         }}
         #grid button label {{
-            color: {self.text_color};
+            color: {c_text};
         }}
         #grid button,
         #grid button:active,
@@ -564,35 +686,35 @@ class VirtualKeyboard(Gtk.Window):
             text-shadow: none;
             -gtk-icon-shadow: none;
             -gtk-outline-radius: 0;
-            background-color: rgba({self._lighter_color()}, {self.opacity});
+            background-color: rgba({c_key}, {self.opacity});
             padding: 0px;
             margin: 0px;
             transition: none;
         }}
         #grid button:hover {{
-            background-color: rgba({self._pressed_bg_color()}, {self.opacity});
+            background-color: rgba({c_pressed}, {self.opacity});
         }}
         button {{
             background-color: transparent;
-            color: {self.text_color};
+            color: {c_text};
         }}
         #grid button.pressed,
         #grid button.pressed:hover,
         #grid button.pressed:active,
         #grid button.pressed:focus {{
-            border-color: {self.text_color};
-            background-color: rgba({self._pressed_bg_color()}, {self.opacity});
+            border-color: {c_text};
+            background-color: rgba({c_pressed}, {self.opacity});
         }}
         tooltip {{
             color: white;
             padding: 5px;
         }}
         #langcombo button.combo {{
-            color: {self.text_color};
+            color: {c_text};
             padding: 2px;
         }}
         #headbar-label {{
-            color: {self.text_color};
+            color: {c_text};
             padding: 0px 1px 0px 6px;
         }}
         #colorbtn {{
@@ -663,6 +785,7 @@ class VirtualKeyboard(Gtk.Window):
             button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
+            button.connect("touch-event", self.on_button_touch_end)
             button.connect("enter-notify-event", self.on_button_enter)
             if key_label not in self._STATIC_LABELS:
                 self.row_buttons.append(button)
@@ -714,6 +837,7 @@ class VirtualKeyboard(Gtk.Window):
             button.connect("pressed", self.on_cmd_press, n)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
+            button.connect("touch-event", self.on_button_touch_end)
             button.connect("enter-notify-event", self.on_button_enter)
             grid.attach(button, start_col + i * width, f_row_index, width, 1)
 
@@ -758,6 +882,7 @@ class VirtualKeyboard(Gtk.Window):
                 button.connect("pressed", self.on_button_press, key_event)
             button.connect("released", self.on_button_release)
             button.connect("leave-notify-event", self.on_button_release)
+            button.connect("touch-event", self.on_button_touch_end)
             button.connect("enter-notify-event", self.on_button_enter)
             grid.attach(button, col, row_i, width, 1)
 
@@ -825,8 +950,11 @@ class VirtualKeyboard(Gtk.Window):
             )
             return
 
+        # ponytail: grab the label BEFORE emit_key() clears sticky
+        # modifiers and resets every button label back to unshifted.
+        label = widget.get_label()
         self.emit_key(key_event)
-        self._track_word(key_event, widget.get_label())
+        self._track_word(key_event, label)
         widget.get_style_context().add_class("pressed")
         self.delay_source = GLib.timeout_add(400, self.start_repeat, key_event)
 
@@ -847,6 +975,16 @@ class VirtualKeyboard(Gtk.Window):
         parent = widget.get_parent()
         if parent is not None:
             parent.queue_draw()
+
+    def on_button_touch_end(self, widget, event):
+        # ponytail: GTK auto-emulates a normal tap as press/release + enter/
+        # leave, but a touch that's CANCELLED (palm rejection, the compositor
+        # grabbing it for a gesture, a second touch point appearing) fires
+        # neither, so on_button_release() never runs and the pressed/hover
+        # highlight is stuck until some unrelated redraw. Catch the raw touch
+        # end/cancel directly as a guaranteed release path.
+        if event.type in (Gdk.EventType.TOUCH_END, Gdk.EventType.TOUCH_CANCEL):
+            self.on_button_release(widget)
 
     def on_button_enter(self, widget, *args):
         # Force a redraw on hover enter as well, to avoid the same
@@ -881,6 +1019,8 @@ class VirtualKeyboard(Gtk.Window):
     _POSITION_BREAKERS = {uinput.KEY_UP, uinput.KEY_DOWN, uinput.KEY_LEFT,
                            uinput.KEY_RIGHT, uinput.KEY_DELETE}
 
+    _WORD_TIMEOUT_MS = 1000
+
     def _track_word(self, key_event, label):
         if key_event in self._WORD_BREAKERS or key_event in self._POSITION_BREAKERS:
             self.current_word = ""
@@ -889,8 +1029,29 @@ class VirtualKeyboard(Gtk.Window):
         elif len(label) == 1:
             self.current_word += label
         else:
-            return  # other control keys (Tab, etc.) leave word untouched
+            return  # other control keys (Tab, F1..F12, etc.) leave word untouched
+        # ponytail: only reached for keys that actually change the shown word —
+        # letters/digits/punctuation typed, backspace, or a breaker clearing it.
+        # Unrelated keys (Tab, F-row, Esc, End...) must NOT restart the clock,
+        # or holding the keyboard idle-but-poking-F-keys would keep stale text
+        # on screen indefinitely.
+        self._reset_word_timeout()
         self.word_label.set_label(self.current_word)
+
+    def _reset_word_timeout(self):
+        # ponytail: debounce — every keypress restarts this, so the preview
+        # only clears after the timeout with no typing, not that long after it started.
+        if hasattr(self, "_word_clear_source"):
+            GLib.source_remove(self._word_clear_source)
+        self._word_clear_source = GLib.timeout_add(
+            self._WORD_TIMEOUT_MS, self._clear_word_preview
+        )
+
+    def _clear_word_preview(self):
+        self.current_word = ""
+        self.word_label.set_label("")
+        del self._word_clear_source
+        return False
 
     # ------------------------------------------------------------------ config
 
@@ -904,6 +1065,7 @@ class VirtualKeyboard(Gtk.Window):
                 self.config.read(self.CONFIG_FILE)
                 self.bg_color      = self.config.get("DEFAULT", "bg_color")
                 self.opacity       = self.config.get("DEFAULT", "opacity")
+                self.follow_qt = self.config.getboolean("DEFAULT", "follow_qt", fallback=False)
                 self.text_color    = self.config.get("DEFAULT", "text_color",    fallback="white")
                 self.width         = self.config.getint("DEFAULT", "width",      fallback=0)
                 self.height        = self.config.getint("DEFAULT", "height",     fallback=0)
@@ -920,6 +1082,7 @@ class VirtualKeyboard(Gtk.Window):
         self.config["DEFAULT"] = {
             "bg_color":      self.bg_color,
             "opacity":       self.opacity,
+            "follow_qt": str(self.follow_qt),
             "text_color":    self.text_color,
             "width":         self.width,
             "height":        self.height,
@@ -966,17 +1129,84 @@ if __name__ == "__main__":
     GLib.timeout_add(500, _enable_resize_tracking)
 
     win._drag_start = None
+    win._pen_last_apply = None
+    win._drag_bounds = None
+    _PEN_THROTTLE_MS = 20  # ~one compositor frame, see _is_pen comment below
+    _MIN_VISIBLE_PX = 48  # keep at least this much of the header on screen
+
+    def _monitor_size():
+        # ponytail: margins here are relative to whichever output the
+        # layer-shell surface is on, so clamp against that output's size, not
+        # some global desktop size (Wayland has no such thing anyway).
+        display = Gdk.Display.get_default()
+        gdk_window = win.get_window()
+        monitor = display.get_monitor_at_window(gdk_window) if gdk_window else None
+        monitor = monitor or display.get_primary_monitor() or display.get_monitor(0)
+        if monitor is None:
+            return None
+        geo = monitor.get_geometry()
+        return geo.width, geo.height
+
+    def _clamp_pair(left, top, mon_w, mon_h):
+        left = max(0, min(left, max(0, mon_w - _MIN_VISIBLE_PX)))
+        top = max(0, min(top, max(0, mon_h - _MIN_VISIBLE_PX)))
+        return left, top
+
+    def _clamp_to_monitor(*_args):
+        # ponytail: a drag only re-clamps while it's happening. If the output
+        # rotates (or otherwise shrinks) while the keyboard is just sitting
+        # there, the margins set from before can suddenly overshoot the new,
+        # smaller geometry and leave it stranded off-screen with no drag to
+        # fix it. Re-clamp on every monitor geometry change too.
+        size = _monitor_size()
+        if size is None:
+            return
+        L = GtkLayerShell.get_margin(win, GtkLayerShell.Edge.LEFT)
+        T = GtkLayerShell.get_margin(win, GtkLayerShell.Edge.TOP)
+        new_L, new_T = _clamp_pair(L, T, *size)
+        if new_L != L:
+            GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, new_L)
+        if new_T != T:
+            GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, new_T)
 
     def _in_header(widget, x, y):
         alloc = win.header.get_allocation()
         wx, wy = win.header.translate_coordinates(win, 0, 0) or (0, 0)
         return wx <= x <= wx + alloc.width and wy <= y <= wy + alloc.height
 
+    def _is_pen(event):
+        src = event.get_source_device()
+        return src is not None and src.get_source() in (
+            Gdk.InputSource.PEN, Gdk.InputSource.ERASER
+        )
+
+    def _abs_pos(event):
+        # ponytail: return the pointer's screen position, and it has to be done
+        # per input source because GDK-Wayland is not consistent:
+        #  - touch / mouse: event.x_root is a stable absolute frame -> use it.
+        #  - tablet tools: event.x_root is delivered surface-relative, so with
+        #    the surface moving under the pen mid-drag it becomes a feedback
+        #    loop (window_speed = pen_speed - window_speed) and the window
+        #    tracks at half speed. event.x IS surface-relative for the pen, so
+        #    event.x + the layer-shell margin (the surface origin, anchored
+        #    top+left) reconstructs a true absolute position.
+        # Using event.x + margin for touch instead overshoots (its event.x is
+        # already absolute there), hence the split.
+        if _is_pen(event):
+            return (
+                event.x + GtkLayerShell.get_margin(win, GtkLayerShell.Edge.LEFT),
+                event.y + GtkLayerShell.get_margin(win, GtkLayerShell.Edge.TOP),
+            )
+        return (event.x_root, event.y_root)
+
     def on_header_press(widget, event):
         if event.button != 1 or not _in_header(widget, event.x, event.y):
             return
+        win._pen_last_apply = None
+        win._drag_bounds = _monitor_size()
+        ax, ay = _abs_pos(event)
         win._drag_start = (
-            event.x_root, event.y_root,
+            ax, ay,
             GtkLayerShell.get_margin(win, GtkLayerShell.Edge.LEFT),
             GtkLayerShell.get_margin(win, GtkLayerShell.Edge.TOP),
         )
@@ -984,18 +1214,39 @@ if __name__ == "__main__":
     def on_header_motion(widget, event):
         if win._drag_start is None:
             return
+        if _is_pen(event):
+            # ponytail: unlike mouse/touch motion, GDK does not coalesce tablet
+            # -tool samples to the compositor's frame rate, so a fast/long pen
+            # drag fires set_margin() far faster than the compositor actually
+            # applies + re-derives surface-relative coordinates from it. Each
+            # _abs_pos() reconstruction then reads back a margin that hasn't
+            # visually landed yet, and that small error compounds sample after
+            # sample into growing, then runaway, oscillation. Cap pen updates
+            # to roughly one per frame so the compositor keeps up.
+            now = event.time
+            last = win._pen_last_apply
+            if last is not None and ((now - last) & 0xFFFFFFFF) < _PEN_THROTTLE_MS:
+                return
+            win._pen_last_apply = now
         sx, sy, ox, oy = win._drag_start
-        dx = int(event.x_root - sx)
-        dy = int(event.y_root - sy)
-        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, max(0, ox + dx))
-        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, max(0, oy + dy))
+        ax, ay = _abs_pos(event)
+        new_left = int(ox + ax - sx)
+        new_top = int(oy + ay - sy)
+        if win._drag_bounds is not None:
+            new_left, new_top = _clamp_pair(new_left, new_top, *win._drag_bounds)
+        else:
+            new_left, new_top = max(0, new_left), max(0, new_top)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, new_left)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, new_top)
 
     def on_header_release(widget, event):
         win._drag_start = None
+        win._pen_last_apply = None
+        win._drag_bounds = None
 
-    # Gtk.HeaderBar is a windowless widget — add_events on it is a no-op since
-    # it has no GdkWindow. Listen on the toplevel instead and filter by
-    # whether the click/motion falls within the header's allocation.
+    # ponytail: Gtk.HeaderBar is a windowless widget — add_events on it is a
+    # no-op since it has no GdkWindow. Listen on the toplevel instead and
+    # filter by whether the click/motion falls within the header's allocation.
     win.add_events(
         Gdk.EventMask.BUTTON_PRESS_MASK
         | Gdk.EventMask.BUTTON_RELEASE_MASK
@@ -1005,6 +1256,17 @@ if __name__ == "__main__":
     win.connect("motion-notify-event", on_header_motion)
     win.connect("button-release-event", on_header_release)
 
+    # ponytail: catch orientation changes / output swaps that happen while not
+    # dragging (see _clamp_to_monitor above).
+    _display = Gdk.Display.get_default()
+    for _i in range(_display.get_n_monitors()):
+        _display.get_monitor(_i).connect("invalidate", _clamp_to_monitor)
+    _display.connect(
+        "monitor-added",
+        lambda d, m: (m.connect("invalidate", _clamp_to_monitor), _clamp_to_monitor()),
+    )
+
     win.show_all()
     win.change_visibility()
+    _clamp_to_monitor()
     Gtk.main()
